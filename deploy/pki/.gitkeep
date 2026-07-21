@@ -1,0 +1,3 @@
+# Generated PKI material goes here (agent-ca.pem, control-plane.pem/.key,
+# agent-<host>.pem/.key). These are gitignored. Generate with:
+#   cd control-plane && go run ./cmd/genpki -out ../deploy/pki -agent host-1 -dns your.domain -ip 1.2.3.4

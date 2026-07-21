@@ -1,0 +1,26 @@
+# Reverse proxy for A3Panel. Replace a3panel.example.com with your domain;
+# Caddy will obtain and renew TLS automatically. For local testing use
+# `localhost` (Caddy issues an internal cert).
+
+a3panel.example.com {
+	encode gzip
+
+	# Security headers (the control plane also sets these; belt-and-braces).
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# API + metrics + SSE go to the control plane.
+	@backend path /api/* /metrics
+	reverse_proxy @backend host.docker.internal:8080 {
+		flush_interval -1
+	}
+
+	# Everything else is the SPA (served by the control plane when A3P_WEB_DIR
+	# is set, or serve the built web/dist directly here).
+	reverse_proxy host.docker.internal:8080
+}

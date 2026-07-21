@@ -1,0 +1,129 @@
+import fs from "node:fs";
+import path from "node:path";
+import { ZipArchive } from "archiver";
+import type { Response } from "express";
+import { config } from "./config.js";
+
+/** Directory with published a3panel-agent.exe (+ deps). Override with A3P_AGENT_DIST_DIR. */
+export function agentDistDir(): string {
+  const fromEnv = process.env.A3P_AGENT_DIST_DIR?.trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  return config.agentDistDir;
+}
+
+export function resolveAgentExe(): string | null {
+  const dir = agentDistDir();
+  const candidates = [
+    path.join(dir, "a3panel-agent.exe"),
+    path.join(config.repoRoot, "agent-csharp", "bin", "Release", "net8.0", "a3panel-agent.exe"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+export function agentPackageAvailable(): { ok: boolean; dir: string; exe: string | null; message?: string } {
+  const exe = resolveAgentExe();
+  const dir = exe ? path.dirname(exe) : agentDistDir();
+  if (!exe) {
+    return {
+      ok: false,
+      dir,
+      exe: null,
+      message:
+        `Agent binary not found under ${dir}. On the panel machine run: ` +
+        `dotnet publish -c Release -o ../agent-csharp/publish (from agent-csharp), ` +
+        `or set A3P_AGENT_DIST_DIR to a folder containing a3panel-agent.exe.`,
+    };
+  }
+  return { ok: true, dir, exe };
+}
+
+export type AgentJsonFields = {
+  controlPlaneUrl: string;
+  hostId: string;
+  enrollToken: string;
+  armaRoot: string;
+  modsLibraryPath?: string;
+  steamCmdPath?: string;
+};
+
+export function buildAgentJson(fields: AgentJsonFields): string {
+  const body: Record<string, string> = {
+    controlPlaneUrl: fields.controlPlaneUrl,
+    hostId: fields.hostId,
+    enrollToken: fields.enrollToken,
+    armaRoot: fields.armaRoot || "C:\\arma3server",
+    steamCmdPath: fields.steamCmdPath || "C:\\steamcmd\\steamcmd.exe",
+  };
+  if (fields.modsLibraryPath?.trim()) body.modsLibraryPath = fields.modsLibraryPath.trim();
+  return JSON.stringify(body, null, 2) + "\n";
+}
+
+function buildReadme(hostName: string): string {
+  return [
+    `A3Panel host agent package — ${hostName}`,
+    ``,
+    `1. Extract this zip anywhere on the game host (e.g. C:\\a3panel-agent).`,
+    `2. Edit agent.json if needed (armaRoot, steamCmdPath).`,
+    `3. Ensure SteamCMD is installed at steamCmdPath.`,
+    `4. Run a3panel-agent.exe.`,
+    `5. Return to the panel and wait until the host shows "agent connected".`,
+    ``,
+    `Optional Windows service (Admin PowerShell), from the extract folder:`,
+    `  New-Service -Name A3PanelAgent -BinaryPathName "$pwd\\a3panel-agent.exe" -StartupType Automatic`,
+    `  Start-Service A3PanelAgent`,
+    ``,
+    `The enroll token in agent.json is one-time. After the first successful connect it is consumed.`,
+    ``,
+  ].join("\r\n");
+}
+
+const SKIP_NAMES = new Set(["agent.json", "agent.example.json"]);
+const SKIP_EXT = new Set([".pdb"]);
+
+function appendDistTree(archive: ZipArchive, dir: string, base: string) {
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_NAMES.has(ent.name)) continue;
+    const full = path.join(dir, ent.name);
+    const rel = path.relative(base, full).split(path.sep).join("/");
+    if (ent.isDirectory()) {
+      appendDistTree(archive, full, base);
+      continue;
+    }
+    if (SKIP_EXT.has(path.extname(ent.name).toLowerCase())) continue;
+    archive.file(full, { name: rel });
+  }
+}
+
+/** Stream a zip of the published agent + generated agent.json to the response. */
+export async function streamAgentPackageZip(
+  res: Response,
+  opts: { hostName: string; agentJson: string; downloadName?: string },
+): Promise<void> {
+  const avail = agentPackageAvailable();
+  if (!avail.ok || !avail.exe) {
+    throw new Error(avail.message || "agent binary missing");
+  }
+  const distDir = avail.dir;
+  const filename = opts.downloadName || `a3panel-agent-${opts.hostName.replace(/[^\w.-]+/g, "_")}.zip`;
+
+  res.setHeader("Content-Type", "application/zip");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+  const archive = new ZipArchive({ zlib: { level: 6 } });
+  const done = new Promise<void>((resolve, reject) => {
+    archive.on("error", reject);
+    archive.on("end", () => resolve());
+    res.on("error", reject);
+  });
+  archive.pipe(res);
+
+  appendDistTree(archive, distDir, distDir);
+  archive.append(opts.agentJson, { name: "agent.json" });
+  archive.append(buildReadme(opts.hostName), { name: "README.txt" });
+
+  await archive.finalize();
+  await done;
+}

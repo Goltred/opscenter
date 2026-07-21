@@ -1,0 +1,8 @@
+{
+  "controlPlaneUrl": "ws://127.0.0.1:8443/agent/connect",
+  "hostId": "REPLACE-WITH-HOST-UUID",
+  "enrollToken": "",
+  "armaRoot": "C:\\\\arma3server",
+  "modsLibraryPath": "",
+  "steamCmdPath": "C:\\\\steamcmd\\\\steamcmd.exe"
+}

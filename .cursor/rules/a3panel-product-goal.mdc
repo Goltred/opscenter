@@ -1,0 +1,21 @@
+---
+description: A3Panel product end-goal and UX principles for all panel/agent work
+alwaysApply: true
+---
+
+# A3Panel product goal
+
+Self-hosted panel for Arma 3 dedicated servers: hosts (outbound agents), instances, mission profiles, mods, and headless — usable by operators who are not SteamCMD experts.
+
+## UX principles
+
+- **Outcomes over tools.** Label actions by what the user wants (download a mod, verify host, apply profile). Do not brand surfaces as “SteamCMD” unless the log itself is technical.
+- **One job per surface.** Buttons in a card must belong to that card’s purpose. Host tools live on the host; profile tools live on the profile/instance profile card.
+- **Plain help text.** Short sentences. No agent.json / junction / flag dumps in primary copy.
+- **Guided setup once.** Agent setup wizard is the host onboarding path (settings → Steam → package → install → verify). Do not duplicate the same prepare/verify flow as a second primary button.
+- **Status before action.** Prefer check summaries and install status over opaque alerts.
+- **Same-host vs remote HC.** Same-machine headless needs no “reachable address”; that field is only for cross-host HC.
+
+## When changing UI
+
+Prefer fewer, clearer actions. If two labels would confuse a first-time host admin, merge, move, or remove one.

@@ -1,0 +1,43 @@
+# Binaries / build leftovers
+*.exe
+*.test
+*.out
+
+# Node / web
+node_modules/
+web/dist/
+web/.vite/
+server/dist/
+*.tsbuildinfo
+
+# Secrets & local state
+*.env
+.env.local
+deploy/secrets/
+deploy/pki/*.pem
+deploy/pki/*.key
+*.pem
+*.key
+
+# Local data
+data/
+quarantine/
+deploy/missions/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+.a3p_secrets_key
+agent-csharp/publish/
+agent-csharp/bin/
+agent-csharp/obj/
+agent-csharp/agent.json
+
+# Editor
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db
+
+.cursor/plans/
