@@ -53,6 +53,10 @@ async function main() {
   });
 
   startAgentGateway(parseAgentPort(config.agentAddr));
+  const { startScheduleRunner } = await import("./schedules/runner.js");
+  startScheduleRunner();
+  const { startDiscordBot } = await import("./discord/bot.js");
+  void startDiscordBot();
 }
 
 main().catch((err) => {

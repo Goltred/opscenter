@@ -30,6 +30,14 @@ public sealed class FileDeployPayload
     [JsonPropertyName("libraryPath")] public string? LibraryPath { get; set; }
 }
 
+public sealed class FileDeletePayload
+{
+    [JsonPropertyName("relativePath")] public string RelativePath { get; set; } = "";
+    /// <summary>arma | profiles | mpmissions | keys | mods | workshop | modsLibrary</summary>
+    [JsonPropertyName("root")] public string Root { get; set; } = "arma";
+    [JsonPropertyName("libraryPath")] public string? LibraryPath { get; set; }
+}
+
 public static class FileOps
 {
     private static readonly HashSet<string> TextReadableExt = new(StringComparer.OrdinalIgnoreCase)
@@ -99,6 +107,51 @@ public static class FileOps
                 ["path"] = full,
                 ["bytes"] = bytes.Length,
                 ["skipped"] = false,
+            },
+        };
+    }
+
+    public static ResultBody Delete(AgentConfig cfg, FileDeletePayload p)
+    {
+        if (string.IsNullOrWhiteSpace(p.RelativePath))
+            return Fail("relativePath required");
+
+        string full;
+        try { full = ResolvePath(cfg, p.Root, p.RelativePath, mustExist: false, p.LibraryPath); }
+        catch (Exception ex) { return Fail(ex.Message); }
+
+        if (!File.Exists(full))
+        {
+            return new ResultBody
+            {
+                Ok = true,
+                Final = true,
+                Message = "already absent",
+                Data = new Dictionary<string, object>
+                {
+                    ["path"] = full,
+                    ["skipped"] = true,
+                },
+            };
+        }
+
+        try
+        {
+            File.Delete(full);
+        }
+        catch (Exception ex)
+        {
+            return Fail("delete failed: " + ex.Message);
+        }
+
+        return new ResultBody
+        {
+            Ok = true,
+            Final = true,
+            Message = "deleted",
+            Data = new Dictionary<string, object>
+            {
+                ["path"] = full,
             },
         };
     }

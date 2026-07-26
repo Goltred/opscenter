@@ -42,8 +42,12 @@ export function remoteHcIpsFromInstance(inst: Record<string, unknown>): string[]
   return parseRemoteHcIps(inst.remote_hc_ips);
 }
 
-/** IPs for headlessClients[] / localClient[] given local count + remote list. */
-export function headlessAllowlistIps(localCount: number, remoteIps: string[]): string[] {
+/**
+ * IPs for headlessClients[] / localClient[].
+ * Always includes 127.0.0.1 so same-host HCs can be started while the mission is up
+ * without rewriting server.cfg (Arma locks the file and only loads it at start).
+ */
+export function headlessAllowlistIps(_localCount: number, remoteIps: string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   const add = (ip: string) => {
@@ -52,13 +56,14 @@ export function headlessAllowlistIps(localCount: number, remoteIps: string[]): s
     seen.add(s);
     out.push(s);
   };
-  if (localCount > 0) add("127.0.0.1");
+  add("127.0.0.1");
   for (const ip of remoteIps) add(ip);
   return out;
 }
 
 /**
  * Merge HC allowlists into a server.cfg map unless the operator already set them explicitly.
+ * Always seeds 127.0.0.1 (plus any remote IPs) so local HCs can join without a later cfg rewrite.
  * Returns a new object (does not mutate input).
  */
 export function injectHeadlessIntoServerCfg(

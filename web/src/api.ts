@@ -74,11 +74,11 @@ export const api = {
   downloadPost: (p: string, body?: unknown) => downloadRequest("POST", p, body ?? {}),
 };
 
-// Multipart upload (FormData) with CSRF.
-export async function uploadFile(section: string, file: File) {
+// Multipart upload (FormData) with CSRF. Missions only (.pbo).
+export async function uploadMissionFile(file: File) {
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch("/api/uploads?section=" + encodeURIComponent(section), {
+  const res = await fetch("/api/uploads?section=mission", {
     method: "POST",
     credentials: "include",
     headers: { "X-CSRF-Token": csrfToken },
@@ -90,12 +90,43 @@ export async function uploadFile(section: string, file: File) {
   return data;
 }
 
+/** @deprecated Use uploadMissionFile */
+export async function uploadFile(section: string, file: File) {
+  if (section !== "mission") {
+    throw new ApiError(400, "Only mission .pbo uploads are supported");
+  }
+  return uploadMissionFile(file);
+}
+
+/** Upload a .bikey into the panel signature-key library. */
+export async function uploadSignatureKey(file: File) {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch("/api/signature-keys", {
+    method: "POST",
+    credentials: "include",
+    headers: { "X-CSRF-Token": csrfToken },
+    body: fd,
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : undefined;
+  if (!res.ok) throw new ApiError(res.status, data?.error || res.statusText);
+  return data as SignatureKey;
+}
+
+export interface SignatureKey {
+  id: string;
+  filename: string;
+  contentHash: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
 // ---- shared types ----
 export interface User {
   id: string;
   email: string;
   displayName: string;
-  mfaEnabled: boolean;
   disabled: boolean;
   approved?: boolean;
   identities?: { provider: string; subject: string; email?: string; displayName?: string }[];
@@ -201,6 +232,16 @@ export interface Instance {
   state: string;
   status: InstanceStatus;
   online: boolean;
+  /** Scheduled op waiting for Finish → fallback profile. */
+  activeOperation?: {
+    scheduleId: string;
+    name: string;
+    state: string;
+    profileId: string;
+    profileName?: string;
+    fallbackProfileId?: string;
+    fallbackProfileName?: string;
+  };
 }
 export interface SharedCfgPreset {
   id: string;
@@ -239,16 +280,35 @@ export interface Mission {
   name: string;
   pboFilename: string;
 }
+export interface DifficultyPreset {
+  id: string;
+  name: string;
+  version: number;
+  difficulty: {
+    options: Record<string, number>;
+    aiLevelPreset: number;
+    skillAI: number;
+    precisionAI: number;
+  };
+  createdAt?: string;
+  updatedAt?: string;
+}
 export interface MissionProfile {
   id: string;
   name: string;
   version: number;
   mods: string[];
   serverMods: string[];
+  /** library = panel PBO; mod = template shipped inside a Workshop mod. */
+  missionSource?: "library" | "mod";
   missionId?: string;
   missionName?: string;
+  /** Arma template when missionSource is mod (e.g. Antistasi_Ultimate.Altis). */
+  missionTemplate?: string;
   modlistId?: string;
   modlistName?: string;
+  difficultyPresetId?: string;
+  difficultyPresetName?: string;
   serverCfgOverrides: Record<string, unknown>;
   basicCfgOverrides: Record<string, unknown>;
   extraArgs: string[];
@@ -291,17 +351,34 @@ export interface Job {
   instanceName?: string;
   profileId?: string;
   profileName?: string;
+  requestedBy?: string;
+  actorLabel?: string;
+  triggerKind?: string;
+  scheduleId?: string;
+  scheduleName?: string;
 }
 export interface Schedule {
   id: string;
   profileId: string;
+  profileName?: string;
+  fallbackProfileId?: string;
+  fallbackProfileName?: string;
   instanceId?: string;
+  instanceName?: string;
   name: string;
   runAt: string;
   recurrence: string;
   reminderOffsets: number[];
   discordChannel: string;
+  requesterDiscordId?: string;
   state: string;
+  approvedBy?: string;
+  confirmedAt?: string;
+  confirmedBy?: string;
+  confirmSource?: string;
+  lastJobId?: string;
+  lastError?: string;
+  lastFiredAt?: string;
 }
 export interface Upload {
   id: string;

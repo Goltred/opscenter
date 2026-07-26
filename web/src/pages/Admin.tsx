@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, AuditEntry, Host, Instance, Role, User, UserRole } from "../api";
+import { useAuth } from "../auth";
 import { Modal, useList } from "../components/ui";
+import { formatDateTime } from "../formatTime";
 
 const tabs = ["Users", "Roles", "Steam", "Discord", "Audit"] as const;
 type Tab = (typeof tabs)[number];
@@ -246,33 +248,336 @@ function Steam() {
   );
 }
 
+type DiscordStatus = {
+  enabled: boolean;
+  guildId: string;
+  commandChannel: string;
+  authorizedRoleId: string;
+  hasToken: boolean;
+  oauthClientId?: string;
+  inviteUrl?: string | null;
+  connected?: boolean;
+  botTag?: string | null;
+  botId?: string | null;
+  restartHint?: boolean;
+};
+
+type DiscordOption = { id: string; name: string };
+
 function Discord() {
-  const cfg = useList<any>(() => api.get("/discord/config"));
+  const { user } = useAuth();
+  const linkedDiscord = (user?.identities || []).find((i) => i.provider === "discord");
+
+  const [status, setStatus] = useState<DiscordStatus | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [guildId, setGuildId] = useState("");
   const [commandChannel, setCommandChannel] = useState("");
   const [authorizedRoleId, setAuthorizedRoleId] = useState("");
   const [token, setToken] = useState("");
-  const [loaded, setLoaded] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
 
-  if (cfg.data && !loaded) {
-    setEnabled(cfg.data.enabled); setGuildId(cfg.data.guildId || ""); setCommandChannel(cfg.data.commandChannel || ""); setAuthorizedRoleId(cfg.data.authorizedRoleId || ""); setLoaded(true);
+  const [guilds, setGuilds] = useState<DiscordOption[]>([]);
+  const [channels, setChannels] = useState<DiscordOption[]>([]);
+  const [roles, setRoles] = useState<DiscordOption[]>([]);
+  const [pickersError, setPickersError] = useState("");
+
+  async function reloadStatus() {
+    const s = await api.get<DiscordStatus>("/discord/status");
+    setStatus(s);
+    setEnabled(!!s.enabled);
+    setGuildId(s.guildId || "");
+    setCommandChannel(s.commandChannel || "");
+    setAuthorizedRoleId(s.authorizedRoleId || "");
+    return s;
   }
+
+  useEffect(() => {
+    void reloadStatus().catch((e: any) => setError(e.message || "Failed to load Discord settings"));
+  }, []);
+
+  useEffect(() => {
+    if (!status?.connected) {
+      setGuilds([]);
+      setChannels([]);
+      setRoles([]);
+      return;
+    }
+    let cancelled = false;
+    setPickersError("");
+    api
+      .get<DiscordOption[]>("/discord/guilds")
+      .then((rows) => {
+        if (!cancelled) setGuilds(Array.isArray(rows) ? rows : []);
+      })
+      .catch((e: any) => {
+        if (!cancelled) setPickersError(e.message || "Could not list servers");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [status?.connected, status?.botId]);
+
+  useEffect(() => {
+    if (!status?.connected || !guildId) {
+      setChannels([]);
+      setRoles([]);
+      return;
+    }
+    let cancelled = false;
+    Promise.all([
+      api.get<DiscordOption[]>(`/discord/guilds/${encodeURIComponent(guildId)}/channels`),
+      api.get<DiscordOption[]>(`/discord/guilds/${encodeURIComponent(guildId)}/roles`),
+    ])
+      .then(([ch, ro]) => {
+        if (cancelled) return;
+        setChannels(Array.isArray(ch) ? ch : []);
+        setRoles(Array.isArray(ro) ? ro : []);
+      })
+      .catch((e: any) => {
+        if (!cancelled) setPickersError(e.message || "Could not list channels/roles");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [status?.connected, guildId]);
 
   async function save() {
-    try { await api.put("/discord/config", { enabled, guildId, commandChannel, authorizedRoleId, token }); setToken(""); alert("Saved. Restart control plane to (re)connect the bot."); cfg.reload(); }
-    catch (e: any) { alert(e.message); }
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const r = await api.put<DiscordStatus & { status: string; error?: string }>("/discord/config", {
+        enabled,
+        guildId,
+        commandChannel,
+        authorizedRoleId,
+        token,
+      });
+      setToken("");
+      await reloadStatus();
+      if (r.error) {
+        setError(r.error);
+      } else if (r.connected) {
+        setMessage(r.botTag ? `Connected as ${r.botTag}.` : "Saved and connected.");
+      } else if (enabled) {
+        setMessage("Saved. Bot is not connected yet — check the token and Developer Portal intents.");
+      } else {
+        setMessage("Saved. Discord integration is off.");
+      }
+    } catch (e: any) {
+      setError(e.message || "Save failed");
+    } finally {
+      setSaving(false);
+    }
   }
+
+  const connected = !!status?.connected;
+  const inviteUrl = status?.inviteUrl || null;
+
   return (
-    <div className="card">
+    <div className="card" style={{ maxWidth: 640 }}>
       <h2>Discord integration</h2>
-      <div className="grid" style={{ gap: 10, maxWidth: 480 }}>
-        <label className="row"><input type="checkbox" style={{ width: "auto" }} checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled</label>
-        <div><label>Bot token {cfg.data?.hasToken && <span className="badge stage-done">set</span>}</label><input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={cfg.data?.hasToken ? "•••• (leave blank to keep)" : "paste token"} /></div>
-        <div><label>Guild ID</label><input value={guildId} onChange={(e) => setGuildId(e.target.value)} /></div>
-        <div><label>Command channel ID</label><input value={commandChannel} onChange={(e) => setCommandChannel(e.target.value)} /></div>
-        <div><label>Authorized role ID</label><input value={authorizedRoleId} onChange={(e) => setAuthorizedRoleId(e.target.value)} /></div>
-        <button className="btn primary" onClick={save}>Save</button>
+      <p className="muted small" style={{ marginTop: 0 }}>
+        Ops Control uses a Discord bot for schedule reminders, Confirm / Stand down / Finish,{" "}
+        <code>/schedule</code> (upcoming ops), and instance / headless commands. Use <code>/help</code> in Discord to see
+        what people can do. Signing in with Discord is separate — it only links your panel user.
+      </p>
+
+      <div
+        className={"badge " + (connected ? "stage-done" : status?.enabled && status?.hasToken ? "stage-running" : "")}
+        style={{ marginBottom: 14 }}
+      >
+        {connected
+          ? `Connected${status?.botTag ? ` as ${status.botTag}` : ""}`
+          : status?.enabled && status?.hasToken
+            ? "Not connected"
+            : "Off"}
+      </div>
+
+      {linkedDiscord ? (
+        <p className="muted small" style={{ marginTop: 0 }}>
+          You are signed in with Discord as{" "}
+          <strong>{linkedDiscord.displayName || linkedDiscord.subject}</strong>. With schedule permissions, you can
+          Confirm / Stand down / Finish in Discord without a staff role.
+        </p>
+      ) : (
+        <p className="muted small" style={{ marginTop: 0 }}>
+          Tip: sign in to the panel with Discord so your account is linked for schedule actions in Discord.
+        </p>
+      )}
+
+      <div className="grid" style={{ gap: 18 }}>
+        <section>
+          <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>1. Connect the bot</h3>
+          <p className="muted small" style={{ margin: "0 0 10px" }}>
+            Paste the bot token from the Discord Developer Portal (same application as Discord login is fine). Then
+            invite the bot to your server.
+          </p>
+          <label className="row" style={{ marginBottom: 10 }}>
+            <input
+              type="checkbox"
+              style={{ width: "auto" }}
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
+            Enable Discord bot
+          </label>
+          <div style={{ marginBottom: 10 }}>
+            <label>
+              Bot token {status?.hasToken ? <span className="badge stage-done">set</span> : null}
+            </label>
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder={status?.hasToken ? "Leave blank to keep current token" : "Paste bot token"}
+              autoComplete="off"
+            />
+          </div>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            {inviteUrl ? (
+              <a className="btn small primary" href={inviteUrl} target="_blank" rel="noreferrer">
+                Invite bot to server
+              </a>
+            ) : (
+              <span className="muted small">
+                Set <code>A3P_OAUTH_DISCORD_CLIENT_ID</code> to generate an invite link.
+              </span>
+            )}
+          </div>
+          <ul className="muted small" style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+            <li>In the Developer Portal, enable Message Content and Server Members intents for the bot.</li>
+            <li>Invite uses send messages, reactions, and slash commands.</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>2. Choose server and channel</h3>
+          <p className="muted small" style={{ margin: "0 0 10px" }}>
+            Where schedule messages go by default. Save with the bot enabled first so these lists can load.
+          </p>
+          {pickersError ? <div className="error small">{pickersError}</div> : null}
+          {connected ? (
+            <div className="grid" style={{ gap: 10 }}>
+              <div>
+                <label>Server</label>
+                <select value={guildId} onChange={(e) => setGuildId(e.target.value)}>
+                  <option value="">— select server —</option>
+                  {guilds.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                  {guildId && !guilds.some((g) => g.id === guildId) ? (
+                    <option value={guildId}>Current ({guildId})</option>
+                  ) : null}
+                </select>
+              </div>
+              <div>
+                <label>Ops channel</label>
+                <select
+                  value={commandChannel}
+                  onChange={(e) => setCommandChannel(e.target.value)}
+                  disabled={!guildId}
+                >
+                  <option value="">— select channel —</option>
+                  {channels.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                  {commandChannel && !channels.some((c) => c.id === commandChannel) ? (
+                    <option value={commandChannel}>Current ({commandChannel})</option>
+                  ) : null}
+                </select>
+                <div className="muted small">Default channel for reminders and confirm messages.</div>
+              </div>
+              <div>
+                <label>Staff role that can confirm ops</label>
+                <select
+                  value={authorizedRoleId}
+                  onChange={(e) => setAuthorizedRoleId(e.target.value)}
+                  disabled={!guildId}
+                >
+                  <option value="">— none (panel users + schedule creator only) —</option>
+                  {roles.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                  {authorizedRoleId && !roles.some((r) => r.id === authorizedRoleId) ? (
+                    <option value={authorizedRoleId}>Current ({authorizedRoleId})</option>
+                  ) : null}
+                </select>
+                <div className="muted small">
+                  Optional. Members with this Discord role can Confirm / Stand down / Finish without a panel account.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="muted small" style={{ margin: 0 }}>
+              Connect the bot (step 1 + Save) to pick server, channel, and role from dropdowns instead of pasting IDs.
+            </p>
+          )}
+        </section>
+
+        <section>
+          <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>3. Who can act in Discord</h3>
+          <ul className="muted small" style={{ margin: 0, paddingLeft: 18 }}>
+            <li>The person who created the schedule in Discord</li>
+            <li>Panel users signed in with Discord who have schedule permissions</li>
+            <li>Members with the staff role above (if set)</li>
+          </ul>
+        </section>
+
+        <section>
+          <button type="button" className="btn small ghost" onClick={() => setAdvanced((v) => !v)}>
+            {advanced ? "Hide advanced" : "Paste IDs manually"}
+          </button>
+          {advanced && (
+            <div className="grid" style={{ gap: 10, marginTop: 10 }}>
+              <div>
+                <label>Guild ID</label>
+                <input value={guildId} onChange={(e) => setGuildId(e.target.value)} placeholder="Server snowflake" />
+              </div>
+              <div>
+                <label>Command channel ID</label>
+                <input
+                  value={commandChannel}
+                  onChange={(e) => setCommandChannel(e.target.value)}
+                  placeholder="Channel snowflake"
+                />
+              </div>
+              <div>
+                <label>Authorized role ID</label>
+                <input
+                  value={authorizedRoleId}
+                  onChange={(e) => setAuthorizedRoleId(e.target.value)}
+                  placeholder="Role snowflake"
+                />
+              </div>
+            </div>
+          )}
+        </section>
+
+        <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+          <button type="button" className="btn primary" disabled={saving} onClick={() => void save()}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={saving}
+            onClick={() => void reloadStatus().catch((e: any) => setError(e.message))}
+          >
+            Refresh status
+          </button>
+        </div>
+        {message ? <div className="muted small">{message}</div> : null}
+        {error ? <div className="error small">{error}</div> : null}
       </div>
     </div>
   );
@@ -287,7 +592,7 @@ function Audit() {
         <tbody>
           {(entries.data || []).map((e) => (
             <tr key={e.id}>
-              <td className="tag">{new Date(e.createdAt).toLocaleString()}</td>
+              <td className="tag">{formatDateTime(e.createdAt)}</td>
               <td>{e.actorEmail}</td>
               <td className="tag">{e.action}</td>
               <td className="tag">{e.targetId?.slice(0, 12)}</td>

@@ -258,6 +258,15 @@ export async function describeWorkshopItems(
   });
 }
 
+export function formatWorkshopShortList(ids: string[], opts: { network?: boolean } = {}): Promise<string> {
+  return describeWorkshopItems(ids, opts).then((items) => {
+    if (!items.length) return "";
+    return items
+      .map((i) => (i.title && i.title !== i.workshopId ? `${i.title} (${i.workshopId})` : i.workshopId))
+      .join(", ");
+  });
+}
+
 export async function formatWorkshopRefList(ids: string[], opts: { network?: boolean } = {}): Promise<string> {
   const items = await describeWorkshopItems(ids, opts);
   if (!items.length) return "";

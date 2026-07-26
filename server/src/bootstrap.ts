@@ -8,16 +8,23 @@ export async function bootstrap(): Promise<void> {
 
   for (const role of SEED_ROLES) {
     const existing = db.prepare("SELECT id FROM roles WHERE name = ?").get(role.name) as { id: string } | undefined;
-    if (existing) continue;
-    const id = uuid();
-    db.prepare("INSERT INTO roles(id, name, description, builtin) VALUES (?, ?, ?, ?)").run(
-      id,
-      role.name,
-      role.description,
-      role.builtin ? 1 : 0,
+    if (!existing) {
+      const id = uuid();
+      db.prepare("INSERT INTO roles(id, name, description, builtin) VALUES (?, ?, ?, ?)").run(
+        id,
+        role.name,
+        role.description,
+        role.builtin ? 1 : 0,
+      );
+      const insertPerm = db.prepare("INSERT INTO role_permissions(role_id, permission) VALUES (?, ?)");
+      for (const p of role.permissions) insertPerm.run(id, p);
+      continue;
+    }
+    // Keep seed role permissions in sync (additive) so new perms like schedule.confirm land on upgrades.
+    const insertPerm = db.prepare(
+      "INSERT OR IGNORE INTO role_permissions(role_id, permission) VALUES (?, ?)",
     );
-    const insertPerm = db.prepare("INSERT INTO role_permissions(role_id, permission) VALUES (?, ?)");
-    for (const p of role.permissions) insertPerm.run(id, p);
+    for (const p of role.permissions) insertPerm.run(existing.id, p);
   }
 
   const owners = parseBootstrapOwners();

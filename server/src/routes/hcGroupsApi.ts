@@ -23,6 +23,11 @@ import {
 } from "../hcGroups.js";
 import { normalizeDlcCodes } from "../arma/dlcs.js";
 import { modFolderLaunchArg } from "../arma/modsLibrary.js";
+import {
+  registerHcGroupControlImpl,
+  type HcGroupControlOpts,
+  type HcGroupControlResult,
+} from "../hcGroupControl.js";
 
 export type HcGroupRouteDeps = {
   audit: (req: AuthedRequest, action: string, targetId?: string, result?: string) => void;
@@ -175,32 +180,63 @@ export function registerHcGroupRoutes(apiRouter: Router, deps: HcGroupRouteDeps)
     res.status(204).end();
   });
 
+  const replyControl = (res: Response, out: HcGroupControlResult) => {
+    if (!out.ok) {
+      return res.status(out.status).json({
+        error: out.error || "failed",
+        result: out.result,
+        group: out.group,
+      });
+    }
+    res.json({ status: "ok", group: out.group, result: out.result });
+  };
+
   apiRouter.post("/hc-groups/:id/scale", requirePerm("instance.control"), async (req: AuthedRequest, res) => {
-    await runHcGroupScale(req, res, deps);
+    const out = await runHcGroupControlCore(deps, {
+      groupId: String(req.params.id),
+      count: req.body?.count != null ? Number(req.body.count) : undefined,
+      delta: req.body?.delta != null ? Number(req.body.delta) : undefined,
+      actorId: req.user?.id || null,
+      actorLabel: req.user?.email || "",
+      source: "api",
+    });
+    replyControl(res, out);
   });
 
   apiRouter.post("/hc-groups/:id/start", requirePerm("instance.control"), async (req: AuthedRequest, res) => {
-    await runHcGroupScale(req, res, deps, { forceStart: true });
+    const out = await runHcGroupControlCore(deps, {
+      groupId: String(req.params.id),
+      forceStart: true,
+      actorId: req.user?.id || null,
+      actorLabel: req.user?.email || "",
+      source: "api",
+    });
+    replyControl(res, out);
   });
 
   apiRouter.post("/hc-groups/:id/stop", requirePerm("instance.control"), async (req: AuthedRequest, res) => {
-    const row = getHcGroupRow(req.params.id);
-    if (!row) return res.status(404).json({ error: "not found" });
-    const hub = getHub();
-    if (!hub.isOnline(row.host_id)) return res.status(503).json({ error: "worker agent offline" });
-    try {
-      const result = await hub.dispatch(row.host_id, "hcgroup.stop", { groupId: row.id }, 60_000);
-      audit(req, "hcgroup.stop", row.id, result.ok ? "ok" : "failed");
-      if (!result.ok) return res.status(502).json({ error: result.error || "stop failed", result });
-      res.json({ status: "ok", result, group: hcGroupDto(row) });
-    } catch (e) {
-      res.status(503).json({ error: e instanceof Error ? e.message : "stop failed" });
-    }
+    const out = await runHcGroupControlCore(deps, {
+      groupId: String(req.params.id),
+      stopOnly: true,
+      actorId: req.user?.id || null,
+      actorLabel: req.user?.email || "",
+      source: "api",
+    });
+    replyControl(res, out);
   });
 
   apiRouter.post("/hc-groups/:id/restart", requirePerm("instance.control"), async (req: AuthedRequest, res) => {
-    await runHcGroupScale(req, res, deps, { forceRestart: true });
+    const out = await runHcGroupControlCore(deps, {
+      groupId: String(req.params.id),
+      forceRestart: true,
+      actorId: req.user?.id || null,
+      actorLabel: req.user?.email || "",
+      source: "api",
+    });
+    replyControl(res, out);
   });
+
+  registerHcGroupControlImpl((opts) => runHcGroupControlCore(deps, opts));
 }
 
 async function syncTargetAllowlist(instanceId: string, deps: HcGroupRouteDeps) {
@@ -335,20 +371,43 @@ async function buildGroupHeadlessPayload(group: HcGroupRow, deps: HcGroupRouteDe
   };
 }
 
-async function runHcGroupScale(
-  req: AuthedRequest,
-  res: Response,
+function writeHcAudit(opts: HcGroupControlOpts, action: string, targetId: string, result: string) {
+  getDb()
+    .prepare(
+      `INSERT INTO audit_log(actor_id, actor_email, action, target_id, result, ip)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(opts.actorId || null, opts.actorLabel || "", action, targetId, result, opts.source || "");
+}
+
+async function runHcGroupControlCore(
   deps: HcGroupRouteDeps,
-  opts?: { forceStart?: boolean; forceRestart?: boolean },
-) {
-  const { audit } = deps;
-  const row = getHcGroupRow(req.params.id);
-  if (!row) return res.status(404).json({ error: "not found" });
+  opts: HcGroupControlOpts,
+): Promise<HcGroupControlResult> {
+  const row = getHcGroupRow(opts.groupId);
+  if (!row) return { ok: false, status: 404, error: "not found" };
+
+  if (opts.stopOnly) {
+    const hub = getHub();
+    if (!hub.isOnline(row.host_id)) {
+      return { ok: false, status: 503, error: "worker agent offline", group: hcGroupDto(row) };
+    }
+    try {
+      const result = await hub.dispatch(row.host_id, "hcgroup.stop", { groupId: row.id }, 60_000);
+      writeHcAudit(opts, "hcgroup.stop", row.id, result.ok ? "ok" : "failed");
+      if (!result.ok) {
+        return { ok: false, status: 502, error: result.error || "stop failed", result, group: hcGroupDto(row) };
+      }
+      return { ok: true, status: 200, result, group: hcGroupDto(row) };
+    } catch (e) {
+      return { ok: false, status: 503, error: e instanceof Error ? e.message : "stop failed", group: hcGroupDto(row) };
+    }
+  }
 
   let target = clampHeadlessCount(row.desired_count);
-  if (req.body?.count != null) target = clampHeadlessCount(req.body.count);
-  else if (req.body?.delta != null) target = clampHeadlessCount(target + Number(req.body.delta));
-  else if (opts?.forceStart) target = Math.max(1, target);
+  if (opts.count != null) target = clampHeadlessCount(opts.count);
+  else if (opts.delta != null) target = clampHeadlessCount(target + Number(opts.delta));
+  else if (opts.forceStart) target = Math.max(1, target);
 
   getDb()
     .prepare(`UPDATE hc_groups SET desired_count=?, updated_at=datetime('now') WHERE id=?`)
@@ -357,7 +416,7 @@ async function runHcGroupScale(
 
   const hub = getHub();
   if (!hub.isOnline(updated.host_id)) {
-    return res.status(503).json({ error: "worker agent offline", group: hcGroupDto(updated) });
+    return { ok: false, status: 503, error: "worker agent offline", group: hcGroupDto(updated) };
   }
 
   try {
@@ -365,14 +424,14 @@ async function runHcGroupScale(
       await syncTargetAllowlist(updated.target_instance_id, deps);
     }
 
-    if (opts?.forceRestart) {
+    if (opts.forceRestart) {
       await hub.dispatch(updated.host_id, "hcgroup.stop", { groupId: updated.id }, 60_000);
     }
 
     if (target <= 0) {
       const result = await hub.dispatch(updated.host_id, "hcgroup.stop", { groupId: updated.id }, 60_000);
-      audit(req, "hcgroup.scale", updated.id, result.ok ? "ok" : "failed");
-      return res.json({ status: "ok", group: hcGroupDto(updated), result });
+      writeHcAudit(opts, "hcgroup.scale", updated.id, result.ok ? "ok" : "failed");
+      return { ok: true, status: 200, group: hcGroupDto(updated), result };
     }
 
     const built = await buildGroupHeadlessPayload(updated, deps);
@@ -387,12 +446,23 @@ async function runHcGroupScale(
       },
       120_000,
     );
-    audit(req, "hcgroup.scale", updated.id, result.ok ? "ok" : "failed");
+    writeHcAudit(opts, "hcgroup.scale", updated.id, result.ok ? "ok" : "failed");
     if (!result.ok) {
-      return res.status(502).json({ error: result.error || "scale failed", result, group: hcGroupDto(updated) });
+      return {
+        ok: false,
+        status: 502,
+        error: result.error || "scale failed",
+        result,
+        group: hcGroupDto(updated),
+      };
     }
-    res.json({ status: "ok", group: hcGroupDto(getHcGroupRow(updated.id)!), result });
+    return { ok: true, status: 200, group: hcGroupDto(getHcGroupRow(updated.id)!), result };
   } catch (e) {
-    res.status(502).json({ error: e instanceof Error ? e.message : "scale failed", group: hcGroupDto(updated) });
+    return {
+      ok: false,
+      status: 502,
+      error: e instanceof Error ? e.message : "scale failed",
+      group: hcGroupDto(updated),
+    };
   }
 }

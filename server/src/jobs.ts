@@ -1,7 +1,7 @@
 import { getDb, jsonParse } from "./db.js";
 
 /** Max retained rows in instance Job history. */
-export const JOBS_HISTORY_LIMIT = 3;
+export const JOBS_HISTORY_LIMIT = 10;
 
 /** Keep only the newest N jobs for an instance (by created_at). */
 export function pruneInstanceJobs(instanceId: string, keep = JOBS_HISTORY_LIMIT): void {
@@ -40,16 +40,41 @@ export type JobDto = {
   instanceName?: string;
   profileId?: string;
   profileName?: string;
+  /** Panel user id when a signed-in user started the job. */
+  requestedBy?: string;
+  /** Display label for who/what triggered the job. */
+  actorLabel?: string;
+  /** `user` | `schedule` | empty for legacy rows. */
+  triggerKind?: string;
+  scheduleId?: string;
+  scheduleName?: string;
 };
+
+function resolveActorLabel(row: Record<string, unknown>): string {
+  const stored = String(row.actor_label || "").trim();
+  if (stored) return stored;
+  const requestedBy = String(row.requested_by || "").trim();
+  if (!requestedBy) return "";
+  if (requestedBy === "scheduler") return "Scheduler";
+  const user = getDb()
+    .prepare("SELECT email, display_name FROM users WHERE id = ?")
+    .get(requestedBy) as { email?: string; display_name?: string } | undefined;
+  if (user) return String(user.display_name || user.email || requestedBy);
+  return requestedBy;
+}
 
 export function jobDto(row: Record<string, unknown>): JobDto {
   const hostId = row.host_id ? String(row.host_id) : undefined;
   const instanceId = row.instance_id ? String(row.instance_id) : undefined;
   const profileId = row.profile_id ? String(row.profile_id) : undefined;
+  const scheduleId = row.schedule_id ? String(row.schedule_id) : undefined;
+  const triggerKind = String(row.trigger_kind || "").trim() || undefined;
+  const requestedBy = row.requested_by != null && String(row.requested_by).trim() ? String(row.requested_by) : undefined;
 
   let hostName: string | undefined;
   let instanceName: string | undefined;
   let profileName: string | undefined;
+  let scheduleName: string | undefined;
 
   const db = getDb();
   if (hostId) {
@@ -66,6 +91,12 @@ export function jobDto(row: Record<string, unknown>): JobDto {
       | undefined;
     profileName = p?.name ? String(p.name) : undefined;
   }
+  if (scheduleId) {
+    const s = db.prepare("SELECT name FROM schedules WHERE id = ?").get(scheduleId) as { name?: string } | undefined;
+    scheduleName = s?.name ? String(s.name) : undefined;
+  }
+
+  const actorLabel = resolveActorLabel(row) || undefined;
 
   return {
     id: String(row.id),
@@ -82,6 +113,11 @@ export function jobDto(row: Record<string, unknown>): JobDto {
     instanceName,
     profileId,
     profileName,
+    requestedBy,
+    actorLabel,
+    triggerKind,
+    scheduleId,
+    scheduleName,
   };
 }
 

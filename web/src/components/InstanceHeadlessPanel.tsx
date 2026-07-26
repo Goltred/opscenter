@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, Host, Instance, MissionProfile } from "../api";
 
 const MAX_HC = 8;
@@ -13,7 +13,7 @@ function hcBadgeClass(state: string): string {
 
 export function InstanceHeadlessPanel({
   instance,
-  host,
+  host: _host,
   profile,
   canControl,
   canEdit,
@@ -26,7 +26,7 @@ export function InstanceHeadlessPanel({
   canEdit: boolean;
   onChanged: () => void;
 }) {
-  const [busy, setBusy] = useState("");
+  const [busy, setBusy] = useState(false);
   const [remoteDraft, setRemoteDraft] = useState((instance.remoteHcIps || []).join(", "));
   const [showAdvanced, setShowAdvanced] = useState(!!(instance.remoteHcIps || []).length);
   const [error, setError] = useState("");
@@ -41,42 +41,39 @@ export function InstanceHeadlessPanel({
     const s = h.state.toLowerCase();
     return s === "running" || s === "connected" || s === "starting";
   }).length;
+  const canAdjust = canEdit || canControl;
 
-  async function saveCount(next: number) {
-    if (!canEdit && !canControl) return;
-    setBusy("save");
+  useEffect(() => {
+    setRemoteDraft((instance.remoteHcIps || []).join(", "));
+  }, [instance.remoteHcIps]);
+
+  async function step(delta: number) {
+    if (busy || !canAdjust) return;
+    const next = Math.min(MAX_HC, Math.max(0, desired + delta));
+    if (next === desired) return;
+    if (delta > 0 && serverUp && (!serverReady || !canControl)) return;
+
+    setBusy(true);
     setError("");
     try {
       if (serverUp && canControl) {
-        await api.post(`/instances/${instance.id}/headless/scale`, { count: next });
+        await api.post(`/instances/${instance.id}/headless/scale`, { delta });
       } else if (canEdit) {
         await api.patch(`/instances/${instance.id}`, { headlessCount: next });
+      } else {
+        await api.post(`/instances/${instance.id}/headless/scale`, { delta });
       }
       onChanged();
     } catch (e: any) {
-      setError(e.message || "Failed to save");
+      setError(e.message || "Failed");
     } finally {
-      setBusy("");
-    }
-  }
-
-  async function scale(delta: number) {
-    if (!canControl) return;
-    setBusy(delta > 0 ? "add" : "remove");
-    setError("");
-    try {
-      await api.post(`/instances/${instance.id}/headless/scale`, { delta });
-      onChanged();
-    } catch (e: any) {
-      setError(e.message || "Scale failed");
-    } finally {
-      setBusy("");
+      setBusy(false);
     }
   }
 
   async function restartHc(name: string) {
-    if (!canControl) return;
-    setBusy("restart-" + name);
+    if (!canControl || busy) return;
+    setBusy(true);
     setError("");
     try {
       await api.post(`/instances/${instance.id}/headless/${encodeURIComponent(name)}/restart`, {});
@@ -84,13 +81,13 @@ export function InstanceHeadlessPanel({
     } catch (e: any) {
       setError(e.message || "Restart failed");
     } finally {
-      setBusy("");
+      setBusy(false);
     }
   }
 
   async function stopHc(name: string) {
-    if (!canControl) return;
-    setBusy("stop-" + name);
+    if (!canControl || busy) return;
+    setBusy(true);
     setError("");
     try {
       await api.post(`/instances/${instance.id}/headless/${encodeURIComponent(name)}/stop`, {});
@@ -98,13 +95,13 @@ export function InstanceHeadlessPanel({
     } catch (e: any) {
       setError(e.message || "Stop failed");
     } finally {
-      setBusy("");
+      setBusy(false);
     }
   }
 
   async function saveRemoteIps() {
-    if (!canEdit) return;
-    setBusy("remote");
+    if (!canEdit || busy) return;
+    setBusy(true);
     setError("");
     try {
       const ips = remoteDraft
@@ -116,17 +113,18 @@ export function InstanceHeadlessPanel({
     } catch (e: any) {
       setError(e.message || "Failed to save remote IPs");
     } finally {
-      setBusy("");
+      setBusy(false);
     }
   }
 
   return (
-    <div className="card" style={{ marginTop: 16 }}>
+    <div className="card" style={{ marginTop: 16, marginBottom: 16 }}>
       <div className="row between" style={{ marginBottom: 8 }}>
         <div>
           <strong>Headless clients</strong>
           <div className="muted small">
-            Same-host processes managed by the agent on {host?.name || "this host"}. Mission must transfer AI to HCs.
+            Local headless clients on the same computer as this game server. You can add them while the
+            mission is up (Apply once first so localhost is allowed).
           </div>
         </div>
         <span className="tag">
@@ -140,42 +138,45 @@ export function InstanceHeadlessPanel({
         </div>
       )}
 
-      <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-        <label className="row" style={{ gap: 8, alignItems: "center" }}>
-          <span className="muted small">Desired local HCs</span>
+      <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+        <span className="muted small">Desired local HCs</span>
+        <div className="row" style={{ gap: 6, alignItems: "center" }}>
+          <button
+            type="button"
+            className="btn small"
+            disabled={busy || !canAdjust || desired <= 0}
+            title={serverUp ? "Stop one HC and lower desired count" : "Lower desired count"}
+            aria-label="Decrease headless count"
+            onClick={() => void step(-1)}
+          >
+            −
+          </button>
           <input
-            type="number"
-            min={0}
-            max={MAX_HC}
-            style={{ width: 72 }}
-            value={desired}
-            disabled={!canEdit || !!busy}
-            onChange={(e) => {
-              const n = Math.min(MAX_HC, Math.max(0, Number(e.target.value) || 0));
-              void saveCount(n);
-            }}
+            type="text"
+            inputMode="numeric"
+            readOnly
+            value={busy ? "…" : String(desired)}
+            aria-label="Desired headless count"
+            style={{ width: 40, textAlign: "center", fontVariantNumeric: "tabular-nums" }}
           />
-        </label>
-        {canControl && (
-          <>
-            <button
-              className="btn small"
-              disabled={!!busy || !serverUp || !serverReady || desired >= MAX_HC}
-              title={!serverReady ? "Wait until the server is running" : "Start one more HC"}
-              onClick={() => scale(1)}
-            >
-              {busy === "add" ? "Adding…" : "Add HC"}
-            </button>
-            <button
-              className="btn small"
-              disabled={!!busy || desired <= 0}
-              title={serverUp ? "Stop one HC and lower desired count" : "Lower desired count"}
-              onClick={() => scale(-1)}
-            >
-              {busy === "remove" ? "Removing…" : "Remove HC"}
-            </button>
-          </>
-        )}
+          <button
+            type="button"
+            className="btn small"
+            disabled={busy || !canAdjust || desired >= MAX_HC || (serverUp && (!serverReady || !canControl))}
+            title={
+              serverUp && !serverReady
+                ? "Wait until the server is running"
+                : serverUp
+                  ? "Start one more HC"
+                  : "Raise desired count"
+            }
+            aria-label="Increase headless count"
+            onClick={() => void step(1)}
+          >
+            +
+          </button>
+        </div>
+        <span className="muted small">max {MAX_HC}</span>
       </div>
 
       {desired > 0 || live.length > 0 ? (
@@ -194,7 +195,7 @@ export function InstanceHeadlessPanel({
               const name = `hc${i}`;
               const row = live.find((h) => h.name.toLowerCase() === name) || {
                 name,
-                state: serverUp ? "stopped" : "stopped",
+                state: "stopped",
               };
               return (
                 <tr key={name}>
@@ -217,18 +218,10 @@ export function InstanceHeadlessPanel({
                   <td>
                     {canControl && (
                       <div className="row" style={{ gap: 6 }}>
-                        <button
-                          className="btn small"
-                          disabled={!!busy || !serverUp}
-                          onClick={() => restartHc(name)}
-                        >
+                        <button className="btn small" disabled={busy || !serverUp} onClick={() => void restartHc(name)}>
                           Restart
                         </button>
-                        <button
-                          className="btn small danger"
-                          disabled={!!busy}
-                          onClick={() => stopHc(name)}
-                        >
+                        <button className="btn small danger" disabled={busy} onClick={() => void stopHc(name)}>
                           Stop
                         </button>
                       </div>
@@ -240,7 +233,7 @@ export function InstanceHeadlessPanel({
           </tbody>
         </table>
       ) : (
-        <div className="muted small">No local headless clients configured. Raise the count or click Add HC when the server is up.</div>
+        <div className="muted small">No local headless clients yet. Use + when the server is up to start one.</div>
       )}
 
       <div style={{ marginTop: 12 }}>
@@ -250,19 +243,19 @@ export function InstanceHeadlessPanel({
         {showAdvanced && (
           <div style={{ marginTop: 8 }}>
             <div className="muted small" style={{ marginBottom: 6 }}>
-              Extra IPs written to <code>headlessClients[]</code> / <code>localClient[]</code> for unmanaged remote HCs.
-              Panel-managed HC groups add their worker advertise IPs automatically.
+              Extra IPs allowed to connect as headless (for HCs you start outside this panel). Groups you create on the
+              Dashboard add their machine addresses automatically.
             </div>
             <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
               <input
                 style={{ flex: 1, minWidth: 220 }}
                 value={remoteDraft}
-                disabled={!canEdit || !!busy}
+                disabled={!canEdit || busy}
                 placeholder="192.168.1.10, 10.0.0.5"
                 onChange={(e) => setRemoteDraft(e.target.value)}
               />
               {canEdit && (
-                <button className="btn small" disabled={!!busy} onClick={() => saveRemoteIps()}>
+                <button className="btn small" disabled={busy} onClick={() => void saveRemoteIps()}>
                   Save IPs
                 </button>
               )}

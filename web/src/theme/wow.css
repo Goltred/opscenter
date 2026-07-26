@@ -1,0 +1,238 @@
+/* Product chrome: motion feel, stagger enter, site theater, tactical chrome */
+
+:root {
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-press: cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .modal,
+  .sidebar nav a,
+  .content-body .page-head,
+  .content-body .card,
+  .content-body .error,
+  .content-body .grid > *,
+  body::before,
+  .login-wrap::before {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* —— Motion feel —— */
+.btn {
+  transition:
+    transform 150ms var(--ease-press),
+    border-color 160ms var(--ease-out),
+    background 160ms var(--ease-out),
+    color 160ms var(--ease-out),
+    box-shadow 160ms var(--ease-out);
+}
+.btn:hover:not(:disabled) {
+  transform: translateY(-3px) scale(1.03);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.btn:active:not(:disabled) {
+  transform: translateY(2px) scale(0.96);
+  box-shadow: none;
+  transition-duration: 80ms;
+}
+.sidebar nav a {
+  transition:
+    transform 150ms var(--ease-press),
+    background 160ms var(--ease-out),
+    color 160ms var(--ease-out);
+}
+.sidebar nav a:hover {
+  transform: translateX(3px);
+}
+.sidebar nav a.active:hover {
+  transform: none;
+}
+.modal-backdrop {
+  animation: chrome-fade-in 180ms var(--ease-out);
+}
+.modal {
+  animation: chrome-rise-in 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes chrome-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes chrome-rise-in {
+  from { opacity: 0; transform: translateY(22px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* —— Tactical chrome —— */
+.card {
+  position: relative;
+}
+.card::before,
+.card::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-style: solid;
+  pointer-events: none;
+  opacity: 0.7;
+  z-index: 1;
+}
+.card::before {
+  top: 6px;
+  left: 6px;
+  border-width: 1px 0 0 1px;
+}
+.card::after {
+  right: 6px;
+  bottom: 6px;
+  border-width: 0 1px 1px 0;
+}
+.sidebar {
+  box-shadow:
+    inset -1px 0 0 var(--sidebar-edge),
+    inset 3px 0 0 color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.brand {
+  letter-spacing: 0.08em;
+}
+
+/*
+ * Staggered enter — pages wrap in a single root div, so animate
+ * page-head / cards / grid children (not only content-body > *).
+ */
+@keyframes chrome-stagger-in {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.content-body .page-head,
+.content-body .card,
+.content-body .error,
+.content-body .grid > * {
+  animation: chrome-stagger-in 580ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Top-level sections under the page wrapper */
+.content-body > * > *:nth-child(1) { animation-delay: 0ms; }
+.content-body > * > *:nth-child(2) { animation-delay: 100ms; }
+.content-body > * > *:nth-child(3) { animation-delay: 200ms; }
+.content-body > * > *:nth-child(4) { animation-delay: 300ms; }
+.content-body > * > *:nth-child(5) { animation-delay: 400ms; }
+.content-body > * > *:nth-child(6) { animation-delay: 500ms; }
+.content-body > * > *:nth-child(n + 7) { animation-delay: 580ms; }
+
+/* Host / card grids cascade more clearly */
+.content-body .grid > *:nth-child(1) { animation-delay: 120ms; }
+.content-body .grid > *:nth-child(2) { animation-delay: 220ms; }
+.content-body .grid > *:nth-child(3) { animation-delay: 320ms; }
+.content-body .grid > *:nth-child(4) { animation-delay: 420ms; }
+.content-body .grid > *:nth-child(5) { animation-delay: 520ms; }
+.content-body .grid > *:nth-child(6) { animation-delay: 620ms; }
+.content-body .grid > *:nth-child(7) { animation-delay: 700ms; }
+.content-body .grid > *:nth-child(8) { animation-delay: 780ms; }
+.content-body .grid > *:nth-child(n + 9) { animation-delay: 840ms; }
+
+/* —— Site theater —— */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -15%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      105deg,
+      transparent 38%,
+      color-mix(in srgb, var(--accent) 10%, transparent) 50%,
+      transparent 62%
+    );
+  animation: chrome-sweep 9s ease-in-out infinite;
+}
+#root {
+  position: relative;
+  z-index: 1;
+}
+.login-wrap {
+  position: relative;
+  overflow: hidden;
+}
+.login-wrap::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background:
+    linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--accent) 12%, transparent) 50%, transparent 60%);
+  animation: chrome-sweep 8s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+.login-wrap::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 42%;
+  height: 1px;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+}
+.login-wrap > * {
+  position: relative;
+  z-index: 1;
+}
+@keyframes chrome-sweep {
+  0%, 100% { transform: translateX(-14%); }
+  50% { transform: translateX(14%); }
+}
+
+/* —— Appearance dock —— */
+.appearance-dock {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: min(400px, calc(100vw - 24px));
+}
+.appearance-dock-toggle {
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.appearance-dock-toggle:hover {
+  border-color: var(--accent);
+}
+.appearance-dock-panel {
+  width: min(400px, calc(100vw - 24px));
+  max-height: min(60vh, 520px);
+  overflow: auto;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+@media (max-width: 720px) {
+  .appearance-dock { right: 10px; bottom: 10px; left: auto; }
+  .appearance-dock-panel { width: auto; }
+}

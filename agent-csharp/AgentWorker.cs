@@ -298,6 +298,12 @@ public sealed class AgentWorker : BackgroundService
                     final = FileOps.Read(_cfg, payload);
                     break;
                 }
+                case "file.delete":
+                {
+                    var payload = Deserialize<FileDeletePayload>(cmd.Payload) ?? new FileDeletePayload();
+                    final = FileOps.Delete(_cfg, payload);
+                    break;
+                }
                 case "mod.check":
                 {
                     var payload = Deserialize<ModCheckPayload>(cmd.Payload) ?? new ModCheckPayload();

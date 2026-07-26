@@ -12,6 +12,18 @@ export function pboToMissionTemplate(pboFilename: string): string {
     .replace(/\.pbo$/i, "");
 }
 
+/** How a profile selects its mission for server.cfg. */
+export type MissionSource = "library" | "mod";
+
+export function normalizeMissionSource(raw: unknown): MissionSource {
+  return String(raw || "").trim().toLowerCase() === "mod" ? "mod" : "library";
+}
+
+/** Freeform / stored template string (also strips accidental .pbo suffix). */
+export function normalizeMissionTemplateInput(raw: unknown): string {
+  return pboToMissionTemplate(String(raw || ""));
+}
+
 function missionClassName(template: string): string {
   const base = (template.split(".")[0] || "Mission").trim() || "Mission";
   const cleaned = base.replace(/[^a-zA-Z0-9_]/g, "_");
@@ -99,9 +111,19 @@ function canonicalizeNetworkingKeys(cfg: ServerCfgMap): void {
 /** Shared instance defaults, then profile overrides (profile wins on same key). */
 export function mergeServerCfg(shared: ServerCfgMap, profile: ServerCfgMap): ServerCfgMap {
   const out: ServerCfgMap = { ...shared };
+  // Passwords / admins live only in shared settings — ignore legacy profile overrides
+  const sharedOnly = new Set([
+    "password",
+    "passwordAdmin",
+    "passwordadmin",
+    "serverCommandPassword",
+    "servercommandpassword",
+    "admins",
+    "adminIds",
+  ]);
   for (const [k, v] of Object.entries(profile || {})) {
     if (v === undefined) continue;
-    // Empty string on profile can clear a shared password intentionally
+    if (sharedOnly.has(k)) continue;
     out[k] = v;
   }
   // Canonicalize common aliases onto one key
@@ -149,7 +171,9 @@ export function recommendSteamProtocolMaxDataSize(modCount: number): number {
  * Render an Arma 3 dedicated server.cfg from a flat map + optional mission.
  */
 export function renderServerCfg(cfg: ServerCfgMap, opts: RenderServerCfgOpts = {}): string {
-  const merged = mergeServerCfg({}, cfg);
+  // cfg is already shared⊕profile. Pass it as the shared side so password/admins are kept
+  // (mergeServerCfg strips those keys from the profile argument).
+  const merged = mergeServerCfg(cfg, {});
   const hostname = String(merged.hostname ?? "A3Panel Server");
   const maxPlayers = Number(merged.maxPlayers ?? 32);
   const password = String(merged.password ?? "");

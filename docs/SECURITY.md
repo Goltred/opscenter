@@ -10,7 +10,7 @@ controls in place, the hardening checklist, and the deferred iteration-2 work.
 | --- | --- | --- |
 | Game hosts | Remote code execution via the panel/agent | No arbitrary-exec agent; fixed typed operation catalog only |
 | Agent transport | MITM / impersonation | Mutual TLS, per-agent client certs, cert-fingerprint pinning |
-| Panel accounts | Credential theft / brute force | Argon2id, mandatory TOTP MFA, rate limiting, lockout |
+| Panel accounts | Credential theft / session abuse | OAuth-only login, secure sessions, rate limiting |
 | Steam / Discord secrets | Disclosure | Encrypted vault (AES-256-GCM), never returned to browser |
 | Uploaded files | Malicious payloads | Strict allow-list + structural validation + quarantine; pluggable scanner |
 | Privilege escalation | Over-broad access | Granular, per-resource scoped RBAC checked server-side |
@@ -34,9 +34,8 @@ controls in place, the hardening checklist, and the deferred iteration-2 work.
 
 ## AuthN / AuthZ
 
-- Passwords hashed with **Argon2id** (64 MiB, t=3, p=2).
-- **TOTP MFA**: secret generated server-side, stored encrypted, confirmed with a
-  code before activation; login is two-step when enabled.
+- **OAuth-only login** (Discord, Google, Microsoft, Steam, Epic as configured). Password
+  login is disabled.
 - Sessions are random 256-bit tokens; only the SHA-256 hash is stored. Cookies
   are `HttpOnly`, `SameSite=Lax`, and `Secure` outside dev.
 - **CSRF**: double-submit token required on all mutating requests.
@@ -45,6 +44,7 @@ controls in place, the hardening checklist, and the deferred iteration-2 work.
   A global grant covers everything; a host grant covers its instances; an
   instance grant covers only that instance. Checked server-side on every
   endpoint and before every agent dispatch (UI hiding is cosmetic only).
+- New accounts stay **pending approval** until an Owner approves them.
 
 ## Upload safety (iteration 1 — implemented)
 
@@ -74,12 +74,12 @@ enable with `A3P_ENABLE_MISSION_SCANNER=1`. Full iteration-2 scope:
 
 ## Hardening checklist
 
-- [x] Argon2id password hashing
-- [x] Mandatory TOTP MFA support
+- [x] OAuth-only authentication
 - [x] Secure session cookies (HttpOnly / SameSite / Secure)
 - [x] CSRF protection on mutations
 - [x] Login rate limiting
 - [x] Granular, server-enforced RBAC with per-resource scope
+- [x] Owner approval gate for new accounts
 - [x] mTLS agent transport with cert pinning + one-time enrollment
 - [x] No-arbitrary-exec typed operation catalog
 - [x] argv-array launch builder (no shell interpolation)
@@ -102,8 +102,8 @@ Before exposing the panel publicly, verify:
 2. **Scope isolation**: a user scoped to `instance:A` cannot control/view
    `instance:B` or its host.
 3. **CSRF**: mutating requests without a valid `X-CSRF-Token` are rejected.
-4. **Session**: cookies are `Secure`+`HttpOnly`; expired/MFA-pending sessions are
-   rejected by `requireSession`.
+4. **Session**: cookies are `Secure`+`HttpOnly`; expired sessions are rejected by
+   `requireAuth`.
 5. **Uploads**: try a renamed `.exe`→`.pbo`, a zip-slip filename, an oversized
    file, and (with the scanner on) a script with `execVM "http://…"`.
 6. **Agent transport**: a client cert not signed by the CA, or an unknown

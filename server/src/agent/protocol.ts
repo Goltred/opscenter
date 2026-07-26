@@ -23,6 +23,7 @@ export type OpType =
   | "file.deploy"
   | "file.list"
   | "file.read"
+  | "file.delete"
   | "rcon.command"
   | "host.reboot";
 

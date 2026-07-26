@@ -10,8 +10,6 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   display_name TEXT NOT NULL DEFAULT '',
   password_hash TEXT NOT NULL DEFAULT '',
-  mfa_secret TEXT NOT NULL DEFAULT '',
-  mfa_enabled INTEGER NOT NULL DEFAULT 0,
   disabled INTEGER NOT NULL DEFAULT 0,
   approved INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -38,8 +36,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   expires_at TEXT NOT NULL,
   ip TEXT NOT NULL DEFAULT '',
-  user_agent TEXT NOT NULL DEFAULT '',
-  mfa_pending INTEGER NOT NULL DEFAULT 0
+  user_agent TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -127,6 +124,15 @@ CREATE TABLE IF NOT EXISTS missions (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS difficulty_presets (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  difficulty TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS mission_profiles (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -134,7 +140,10 @@ CREATE TABLE IF NOT EXISTS mission_profiles (
   mods TEXT NOT NULL DEFAULT '[]',
   server_mods TEXT NOT NULL DEFAULT '[]',
   mission_id TEXT REFERENCES missions(id) ON DELETE SET NULL,
+  mission_source TEXT NOT NULL DEFAULT 'library',
+  mission_template TEXT NOT NULL DEFAULT '',
   modlist_id TEXT REFERENCES modlists(id) ON DELETE SET NULL,
+  difficulty_preset_id TEXT REFERENCES difficulty_presets(id) ON DELETE SET NULL,
   server_cfg_overrides TEXT NOT NULL DEFAULT '{}',
   basic_cfg_overrides TEXT NOT NULL DEFAULT '{}',
   extra_args TEXT NOT NULL DEFAULT '[]',
@@ -165,12 +174,22 @@ CREATE TABLE IF NOT EXISTS schedules (
   name TEXT NOT NULL DEFAULT '',
   run_at TEXT NOT NULL,
   recurrence TEXT NOT NULL DEFAULT 'none',
-  reminder_offsets TEXT NOT NULL DEFAULT '[60,15]',
+  reminder_offsets TEXT NOT NULL DEFAULT '[1440,360,60,0]',
   discord_channel TEXT NOT NULL DEFAULT '',
+  requester_discord_id TEXT NOT NULL DEFAULT '',
   state TEXT NOT NULL DEFAULT 'scheduled',
   approved_by TEXT,
+  confirmed_at TEXT,
+  confirmed_by TEXT NOT NULL DEFAULT '',
+  confirm_source TEXT NOT NULL DEFAULT '',
   reminder_message_id TEXT NOT NULL DEFAULT '',
+  discord_confirm_message_id TEXT NOT NULL DEFAULT '',
+  discord_finish_message_id TEXT NOT NULL DEFAULT '',
+  reminders_sent TEXT NOT NULL DEFAULT '[]',
+  last_job_id TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT '',
   last_fired_at TEXT,
+  fallback_profile_id TEXT REFERENCES mission_profiles(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -185,6 +204,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   progress TEXT NOT NULL DEFAULT '[]',
   error TEXT NOT NULL DEFAULT '',
   requested_by TEXT,
+  actor_label TEXT NOT NULL DEFAULT '',
+  trigger_kind TEXT NOT NULL DEFAULT '',
+  schedule_id TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -200,6 +222,16 @@ CREATE TABLE IF NOT EXISTS uploads (
   detected_type TEXT NOT NULL DEFAULT '',
   validation_state TEXT NOT NULL DEFAULT 'quarantined',
   reject_reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS signature_keys (
+  id TEXT PRIMARY KEY,
+  filename TEXT NOT NULL,
+  stored_path TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  uploaded_by TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -255,6 +287,20 @@ CREATE TABLE IF NOT EXISTS shared_cfg_preset_revisions (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(preset_id, version)
 );
+
+CREATE TABLE IF NOT EXISTS difficulty_preset_revisions (
+  id TEXT PRIMARY KEY,
+  preset_id TEXT NOT NULL REFERENCES difficulty_presets(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  snapshot TEXT NOT NULL,
+  actor_id TEXT,
+  actor_email TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(preset_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_difficulty_preset_revisions
+  ON difficulty_preset_revisions(preset_id, version DESC);
 `;
 
 export type Db = Database.Database;
@@ -302,6 +348,43 @@ function migrateSchema(database: Db) {
   }
   if (profileCols.length && !profileCols.some((c) => c.name === "recommended_headless_count")) {
     database.exec("ALTER TABLE mission_profiles ADD COLUMN recommended_headless_count INTEGER");
+  }
+
+  database.exec(`
+CREATE TABLE IF NOT EXISTS difficulty_presets (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  difficulty TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS difficulty_preset_revisions (
+  id TEXT PRIMARY KEY,
+  preset_id TEXT NOT NULL REFERENCES difficulty_presets(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  snapshot TEXT NOT NULL,
+  actor_id TEXT,
+  actor_email TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(preset_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_difficulty_preset_revisions
+  ON difficulty_preset_revisions(preset_id, version DESC);
+`);
+
+  const profileCols2 = database.prepare("PRAGMA table_info(mission_profiles)").all() as { name: string }[];
+  if (profileCols2.length && !profileCols2.some((c) => c.name === "difficulty_preset_id")) {
+    database.exec(
+      "ALTER TABLE mission_profiles ADD COLUMN difficulty_preset_id TEXT REFERENCES difficulty_presets(id) ON DELETE SET NULL",
+    );
+  }
+  if (profileCols2.length && !profileCols2.some((c) => c.name === "mission_source")) {
+    database.exec("ALTER TABLE mission_profiles ADD COLUMN mission_source TEXT NOT NULL DEFAULT 'library'");
+  }
+  if (profileCols2.length && !profileCols2.some((c) => c.name === "mission_template")) {
+    database.exec("ALTER TABLE mission_profiles ADD COLUMN mission_template TEXT NOT NULL DEFAULT ''");
   }
 
   const userCols = database.prepare("PRAGMA table_info(users)").all() as { name: string }[];
@@ -379,6 +462,33 @@ CREATE INDEX IF NOT EXISTS idx_identities_user ON user_identities(user_id);
   }
   if (instanceCols.length && !instanceCols.some((c) => c.name === "remote_hc_ips")) {
     database.exec("ALTER TABLE instances ADD COLUMN remote_hc_ips TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  const scheduleCols = database.prepare("PRAGMA table_info(schedules)").all() as { name: string }[];
+  if (scheduleCols.length) {
+    const add = (name: string, ddl: string) => {
+      if (!scheduleCols.some((c) => c.name === name)) database.exec(`ALTER TABLE schedules ADD COLUMN ${ddl}`);
+    };
+    add("requester_discord_id", "requester_discord_id TEXT NOT NULL DEFAULT ''");
+    add("confirmed_at", "confirmed_at TEXT");
+    add("confirmed_by", "confirmed_by TEXT NOT NULL DEFAULT ''");
+    add("confirm_source", "confirm_source TEXT NOT NULL DEFAULT ''");
+    add("discord_confirm_message_id", "discord_confirm_message_id TEXT NOT NULL DEFAULT ''");
+    add("discord_finish_message_id", "discord_finish_message_id TEXT NOT NULL DEFAULT ''");
+    add("reminders_sent", "reminders_sent TEXT NOT NULL DEFAULT '[]'");
+    add("last_job_id", "last_job_id TEXT NOT NULL DEFAULT ''");
+    add("last_error", "last_error TEXT NOT NULL DEFAULT ''");
+    add("fallback_profile_id", "fallback_profile_id TEXT REFERENCES mission_profiles(id) ON DELETE SET NULL");
+  }
+
+  const jobCols = database.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
+  if (jobCols.length) {
+    const addJob = (name: string, ddl: string) => {
+      if (!jobCols.some((c) => c.name === name)) database.exec(`ALTER TABLE jobs ADD COLUMN ${ddl}`);
+    };
+    addJob("actor_label", "actor_label TEXT NOT NULL DEFAULT ''");
+    addJob("trigger_kind", "trigger_kind TEXT NOT NULL DEFAULT ''");
+    addJob("schedule_id", "schedule_id TEXT");
   }
 
   database.exec(`

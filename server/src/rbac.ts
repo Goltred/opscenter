@@ -14,6 +14,7 @@ export const ALL_PERMISSIONS = [
   "profile.apply",
   "profile.delete",
   "schedule.manage",
+  "schedule.confirm",
   "discord.config",
   "steam.config",
   "user.manage",
@@ -45,7 +46,7 @@ export const SEED_ROLES: SeedRole[] = [
   {
     name: "Instance Operator",
     description: "Start/stop/restart and run RCON on assigned instances.",
-    permissions: ["instance.view", "instance.control", "instance.rcon", "instance.config.edit"],
+    permissions: ["instance.view", "instance.control", "instance.rcon", "instance.config.edit", "schedule.confirm"],
     builtin: false,
   },
   {
@@ -60,6 +61,7 @@ export const SEED_ROLES: SeedRole[] = [
       "mission.manage",
       "mod.manage",
       "schedule.manage",
+      "schedule.confirm",
       "instance.view",
     ],
     builtin: false,

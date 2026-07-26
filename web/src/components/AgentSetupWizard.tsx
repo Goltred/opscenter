@@ -45,7 +45,7 @@ const STEPS: { id: StepId; label: string }[] = [
   { id: "steam", label: "Steam account" },
   { id: "package", label: "Download package" },
   { id: "install", label: "Install & run" },
-  { id: "start", label: "Start" },
+  { id: "start", label: "Verify" },
 ];
 
 const DEFAULT_ARMA = "C:\\arma3server";
@@ -385,7 +385,7 @@ export function AgentSetupWizard({
           b.armaServerPresent === true
             ? String(b.armaServerExe || "Found under armaRoot")
             : opts.installing
-              ? "Install started via SteamCMD (creatordlc)"
+              ? "Install started (Creator DLC server build)"
               : "Not installed under armaRoot yet",
       });
     }
@@ -395,7 +395,7 @@ export function AgentSetupWizard({
         id: "install",
         label: "Server install job",
         status: "info",
-        detail: "Downloading creatordlc — open Mods & server on the host card for the log",
+        detail: "Downloading Creator DLC server build — open Mods & server on the host card for the log",
       });
     }
 
@@ -451,7 +451,7 @@ export function AgentSetupWizard({
       if (installing) {
         setPrepareMsg(
           res.result?.message ||
-            "Downloading Arma dedicated server (creatordlc) — open Mods & server on the host card for the log.",
+            "Downloading Arma dedicated server (Creator DLC build) — open Mods & server on the host card for the log.",
         );
       } else {
         setPrepareMsg(res.result?.message || "");
@@ -528,7 +528,7 @@ export function AgentSetupWizard({
                 <p className="muted small" style={{ margin: 0 }}>
                   {isCreate && !activeHost
                     ? "Fill in the paths below, then click Next to create the host and continue."
-                    : "Update paths below, then click Next to save and continue. Values are written into agent.json when you download the package."}
+                    : "Update paths below, then click Next to save and continue. These paths go into the agent package when you download it."}
                 </p>
                 <div>
                   <label>Name</label>
@@ -546,7 +546,7 @@ export function AgentSetupWizard({
                     placeholder={DEFAULT_STEAMCMD}
                   />
                   <div className="muted small" style={{ marginTop: 4 }}>
-                    Written into agent.json — required for installs and mod downloads.
+                    Tool the agent uses to install Arma and download mods. Must exist on the game host.
                   </div>
                 </div>
                 <div>
@@ -574,7 +574,7 @@ export function AgentSetupWizard({
             {step === "steam" && (
               <div className="grid" style={{ gap: 10 }}>
                 <p className="muted small" style={{ margin: 0 }}>
-                  Steam credentials stay on the panel (not in agent.json). Needed later to install/update Arma and mods.
+                  Steam credentials stay on the panel. Needed later to install/update Arma and mods.
                 </p>
                 {steamCount > 0 ? (
                   <>
@@ -582,7 +582,7 @@ export function AgentSetupWizard({
                       {steamCount} account{steamCount === 1 ? "" : "s"} available.
                     </div>
                     <div>
-                      <label>Account to use for SteamCMD</label>
+                      <label>Account for installs and downloads</label>
                       <select value={steamAccountId} onChange={(e) => setSteamAccountId(e.target.value)}>
                         {steamAccounts.map((a) => (
                           <option key={a.id} value={a.id}>
@@ -593,7 +593,7 @@ export function AgentSetupWizard({
                     </div>
                   </>
                 ) : (
-                  <div className="warn-banner">No Steam account yet — add one before Start can install Arma.</div>
+                  <div className="warn-banner">No Steam account yet — add one before Verify can install Arma.</div>
                 )}
 
                 {can("steam.config") ? (
@@ -628,7 +628,7 @@ export function AgentSetupWizard({
                   </div>
                 ) : (
                   <p className="muted small">
-                    You need <span className="tag">steam.config</span> to add accounts. Ask an admin, or open{" "}
+                    You need permission to add Steam accounts. Ask an admin, or open{" "}
                     <Link to="/admin">Admin → Steam</Link>.
                   </p>
                 )}
@@ -638,8 +638,7 @@ export function AgentSetupWizard({
             {step === "package" && (
               <div className="grid" style={{ gap: 10 }}>
                 <p className="muted small" style={{ margin: 0 }}>
-                  Download a zip with <span className="tag">a3panel-agent.exe</span>, dependencies, and{" "}
-                  <span className="tag">agent.json</span> (enroll token + paths from Host settings).
+                  Download a zip with the agent program and a config file that already has your paths and enroll token.
                 </p>
                 {!packageOk && (
                   <div className="error">{packageMessage || info?.packageMessage || "Agent binary not available on the panel server."}</div>
@@ -672,10 +671,7 @@ export function AgentSetupWizard({
                   <li>
                     Copy the zip to the game host and extract it (e.g. <span className="tag">C:\a3panel-agent</span>).
                   </li>
-                  <li>
-                    Confirm <span className="tag">armaRoot</span> and <span className="tag">steamCmdPath</span> in{" "}
-                    <span className="tag">agent.json</span>.
-                  </li>
+                  <li>Check that the Arma root and SteamCMD paths in the config match this host.</li>
                   <li>Install SteamCMD at that path if it is not already there.</li>
                   <li>
                     Run <span className="tag">a3panel-agent.exe</span>.
@@ -699,7 +695,7 @@ export function AgentSetupWizard({
                   )}
                 </div>
                 {liveOnline ? (
-                  <div className="ok-banner">Connected. Continue to Start when you are ready.</div>
+                  <div className="ok-banner">Connected. Continue to Verify when you are ready.</div>
                 ) : (
                   <div className="warn-banner">Start the agent on the game host — this step polls until it connects.</div>
                 )}
@@ -709,8 +705,8 @@ export function AgentSetupWizard({
             {step === "start" && (
               <div className="grid" style={{ gap: 10 }}>
                 <p className="muted small" style={{ margin: 0 }}>
-                  Verify folders and SteamCMD on the host. If Arma is missing and SteamCMD is available, install of the
-                  creatordlc dedicated server will start automatically.
+                  Check folders and SteamCMD on the host. If Arma is missing, this step also starts downloading the
+                  dedicated server (Creator DLC build — needed for SOG, Western Sahara, and similar).
                 </p>
                 <button
                   type="button"

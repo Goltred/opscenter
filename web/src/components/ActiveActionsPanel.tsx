@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Job } from "../api";
-import { useList } from "./ui";
+import { linkifyText } from "./linkify";
+import { useModNameMap } from "../useModNameMap";
 
 const STORAGE_KEY = "a3panel.activeActionsOpen";
+const POLL_MS = 4000;
 
 function kindLabel(job: Job): string {
   switch (job.kind) {
@@ -49,6 +51,7 @@ function whereLabel(job: Job): string {
 }
 
 export function ActiveActionsPanel() {
+  const modNames = useModNameMap();
   const [open, setOpen] = useState(() => {
     try {
       return localStorage.getItem(STORAGE_KEY) === "1";
@@ -56,13 +59,36 @@ export function ActiveActionsPanel() {
       return false;
     }
   });
-  const jobs = useList<Job[]>(() => api.get("/jobs/active"), []);
+  const [list, setList] = useState<Job[]>([]);
+  const [error, setError] = useState("");
+  const [ready, setReady] = useState(false);
+  const inFlight = useRef(false);
+  const prevCount = useRef(0);
+
+  const refresh = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      const rows = await api.get<Job[]>("/jobs/active");
+      const next = Array.isArray(rows) ? rows : [];
+      setList(next);
+      setError("");
+      // Auto-expand when work appears so operators notice without hunting.
+      if (prevCount.current === 0 && next.length > 0) setOpen(true);
+      prevCount.current = next.length;
+    } catch (e: any) {
+      setError(e.message || "Could not load actions");
+    } finally {
+      inFlight.current = false;
+      setReady(true);
+    }
+  }, []);
 
   useEffect(() => {
-    const t = window.setInterval(() => jobs.reload(), 4000);
+    void refresh();
+    const t = window.setInterval(() => void refresh(), POLL_MS);
     return () => window.clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refresh]);
 
   useEffect(() => {
     try {
@@ -72,7 +98,6 @@ export function ActiveActionsPanel() {
     }
   }, [open]);
 
-  const list = jobs.data || [];
   const count = list.length;
 
   return (
@@ -84,7 +109,7 @@ export function ActiveActionsPanel() {
         aria-expanded={open}
       >
         <span className="active-actions-toggle-label">
-          {open ? "Hide" : "Show"} actions
+          Actions
           {count > 0 ? <span className="active-actions-count">{count}</span> : null}
         </span>
         <span className="muted small">{open ? "▾" : "▸"}</span>
@@ -92,10 +117,10 @@ export function ActiveActionsPanel() {
 
       {open && (
         <div className="active-actions-panel">
-          {jobs.loading && !jobs.data && <div className="muted small">Loading…</div>}
-          {jobs.error && <div className="error small">{jobs.error}</div>}
-          {!jobs.loading && count === 0 && (
-            <div className="muted small">No pending or running actions.</div>
+          {!ready && <div className="muted small">Loading…</div>}
+          {error && <div className="error small">{error}</div>}
+          {ready && !error && count === 0 && (
+            <div className="muted small">Idle</div>
           )}
           {count > 0 && (
             <ul className="active-actions-list">
@@ -117,7 +142,7 @@ export function ActiveActionsPanel() {
                         )}
                         {where ? <div className="muted small">{where}</div> : null}
                         <div className="muted small" style={{ marginTop: 2 }}>
-                          {msg}
+                          {linkifyText(msg, { modNames })}
                         </div>
                       </div>
                       <span className={"badge stage-" + (job.state === "failed" ? "failed" : "running")}>

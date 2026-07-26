@@ -1,21 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, Host, Instance, Mission, MissionProfile, Mod, Modlist, SharedCfgPreset } from "../api";
+import { api, DifficultyPreset, Host, Instance, Mission, MissionProfile, Mod, Modlist, SharedCfgPreset } from "../api";
 import { useAuth } from "../auth";
 import { ApplyProfileModal, type ApplyProfileOpts } from "../components/ApplyProfileModal";
 import { RevisionHistoryModal } from "../components/RevisionHistory";
 import { useToast } from "../components/Toast";
 import { Modal, useList } from "../components/ui";
 import { CREATOR_DLCS } from "../arma/dlcs";
-import {
-  DIFFICULTY_OPTIONS,
-  FORCED_DIFFICULTY_CHOICES,
-  mergeCustomDifficulty,
-  OPTION_LABELS_2,
-  OPTION_LABELS_3_PING,
-  OPTION_LABELS_3P,
-  type DifficultyPresetName,
-} from "../arma/difficultyOptions";
+import { notifyProfilesHealthChanged } from "../profilesHealth";
+import { FORCED_DIFFICULTY_CHOICES, type DifficultyPresetName } from "../arma/difficultyOptions";
 
 type HistoryTarget =
   | { kind: "profile"; profile: MissionProfile }
@@ -51,6 +44,7 @@ export function Profiles() {
       });
       instances.reload();
       profiles.reload();
+      notifyProfilesHealthChanged();
     } catch (e: any) {
       toast.error("Apply failed", {
         message: e.message,
@@ -62,7 +56,9 @@ export function Profiles() {
   }
   async function del(p: MissionProfile) {
     if (!confirm("Delete profile?")) return;
-    await api.del(`/profiles/${p.id}`); profiles.reload();
+    await api.del(`/profiles/${p.id}`);
+    profiles.reload();
+    notifyProfilesHealthChanged();
   }
 
   return (
@@ -71,7 +67,7 @@ export function Profiles() {
         <div>
           <h1>Mission Profiles</h1>
           <div className="muted">
-            Reusable library of mods, missions, and config. Shared settings below are the global server.cfg baseline; apply merges them with a profile onto any instance.
+            Reusable library of mods, missions, and config. Apply merges a profile with shared settings onto an instance.
           </div>
         </div>
         <div className="row">
@@ -91,19 +87,8 @@ export function Profiles() {
         </div>
       )}
 
-      {can("instance.config.edit") && (
-        <SharedSettingsCard
-          shared={presets.data?.[0] || null}
-          loading={presets.loading}
-          onChanged={() => {
-            presets.reload();
-          }}
-          onHistory={(preset) => setHistoryTarget({ kind: "shared-cfg", preset })}
-        />
-      )}
-
       {can("profile.view") && (
-        <div className="card">
+        <div className="card" style={{ marginBottom: 16 }}>
           <table>
             <thead><tr><th>Name</th><th>Mission</th><th>Mods / DLCs</th><th>Difficulty</th><th></th></tr></thead>
             <tbody>
@@ -120,7 +105,34 @@ export function Profiles() {
                       </span>
                     )}
                   </td>
-                  <td>{p.missionName || (p.missionId ? <span className="tag">{p.missionId.slice(0, 8)}…</span> : <span className="muted">—</span>)}</td>
+                  <td>
+                    {(() => {
+                      const source = p.missionSource === "mod" ? "mod" : "library";
+                      if (source === "mod") {
+                        if (p.missionTemplate) {
+                          return (
+                            <>
+                              {p.missionTemplate}
+                              <div className="muted small">From mod</div>
+                            </>
+                          );
+                        }
+                        return (
+                          <span className="badge" style={{ background: "rgba(234,179,8,0.15)", color: "var(--yellow,#eab308)" }} title="Enter a mission template from the mod">
+                            Needs mission
+                          </span>
+                        );
+                      }
+                      if (p.missionName || p.missionId) {
+                        return p.missionName || `${String(p.missionId).slice(0, 8)}…`;
+                      }
+                      return (
+                        <span className="badge" style={{ background: "rgba(234,179,8,0.15)", color: "var(--yellow,#eab308)" }} title="Assign a mission before applying this profile">
+                          Needs mission
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td>
                     {(() => {
                       const extra = p.mods.length + p.serverMods.length;
@@ -139,7 +151,15 @@ export function Profiles() {
                       <div className="muted small">DLC: {(p.dlcs || []).join(", ")}</div>
                     )}
                   </td>
-                  <td className="tag">{String(p.serverCfgOverrides?.forcedDifficulty || "—")}</td>
+                  <td className="tag">
+                    {(() => {
+                      const forced = String(p.serverCfgOverrides?.forcedDifficulty || "");
+                      if (forced === "Custom") {
+                        return p.difficultyPresetName || (p.difficultyPresetId ? "Custom" : "Custom (no preset)");
+                      }
+                      return forced || "—";
+                    })()}
+                  </td>
                   <td>
                     <div className="cell-actions">
                     {can("profile.apply") && (
@@ -165,11 +185,22 @@ export function Profiles() {
         </div>
       )}
 
+      {can("instance.config.edit") && (
+        <SharedSettingsSection
+          shared={presets.data?.[0] || null}
+          loading={presets.loading}
+          onChanged={() => {
+            presets.reload();
+          }}
+          onHistory={(preset) => setHistoryTarget({ kind: "shared-cfg", preset })}
+        />
+      )}
+
       {(creating || editing) && (
         <ProfileEditor
           profile={editing}
           onClose={() => { setCreating(false); setEditing(null); }}
-          onSaved={() => { setCreating(false); setEditing(null); profiles.reload(); }}
+          onSaved={() => { setCreating(false); setEditing(null); profiles.reload(); notifyProfilesHealthChanged(); }}
           onHistory={
             editing
               ? () => {
@@ -202,6 +233,7 @@ export function Profiles() {
           onRestored={() => {
             profiles.reload();
             setEditing(null);
+            notifyProfilesHealthChanged();
           }}
         />
       )}
@@ -223,7 +255,7 @@ export function Profiles() {
   );
 }
 
-function SharedSettingsCard({
+function SharedSettingsSection({
   shared,
   loading,
   onChanged,
@@ -234,12 +266,91 @@ function SharedSettingsCard({
   onChanged: () => void;
   onHistory: (preset: SharedCfgPreset) => void;
 }) {
-  const toast = useToast();
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     if (window.location.hash !== "#shared-settings") return;
-    document.getElementById("shared-settings")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [shared?.id]);
+    setEditing(true);
+    // Keep hash for Instance deep links; scroll summary into view once ready.
+    requestAnimationFrame(() => {
+      document.getElementById("shared-settings")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }, []);
+
+  const cfg = shared?.serverCfg || {};
+  const hostname = String(cfg.hostname || "").trim();
+  const maxPlayers = Number(cfg.maxPlayers ?? 32) || 32;
+  const battlEye = Number(cfg.battlEye ?? cfg.BattlEye ?? 1) !== 0;
+  const verify = normalizeVerifySignaturesUi(cfg.verifySignatures) === "2";
+
+  return (
+    <>
+      <div className="card" id="shared-settings">
+        <div className="row between" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <h2 style={{ margin: 0 }}>Shared settings</h2>
+            <div className="muted small" style={{ marginTop: 4 }}>
+              Global server.cfg baseline. Merged with each profile on Apply (profile wins on the same key).
+            </div>
+            {loading || !shared ? (
+              <div className="muted small" style={{ marginTop: 10 }}>Loading…</div>
+            ) : (
+              <div className="muted small" style={{ marginTop: 10 }}>
+                <span className="tag">{hostname || "No hostname"}</span>
+                <span className="muted" style={{ margin: "0 8px" }}>·</span>
+                {maxPlayers} players
+                <span className="muted" style={{ margin: "0 8px" }}>·</span>
+                BattlEye {battlEye ? "on" : "off"}
+                <span className="muted" style={{ margin: "0 8px" }}>·</span>
+                Signatures {verify ? "verified" : "off"}
+                <span className="muted" style={{ margin: "0 8px" }}>·</span>
+                v{shared.version || 1}
+              </div>
+            )}
+          </div>
+          <div className="row" style={{ gap: 8, flexShrink: 0 }}>
+            <button
+              type="button"
+              className="btn small primary"
+              disabled={loading || !shared}
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {editing && shared && (
+        <SharedSettingsEditorModal
+          shared={shared}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            onChanged();
+            setEditing(false);
+          }}
+          onHistory={() => {
+            onHistory(shared);
+            setEditing(false);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function SharedSettingsEditorModal({
+  shared,
+  onClose,
+  onSaved,
+  onHistory,
+}: {
+  shared: SharedCfgPreset;
+  onClose: () => void;
+  onSaved: () => void;
+  onHistory: () => void;
+}) {
+  const toast = useToast();
 
   const [hostname, setHostname] = useState("");
   const [password, setPassword] = useState("");
@@ -267,7 +378,7 @@ function SharedSettingsCard({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const c = shared?.serverCfg || {};
+    const c = shared.serverCfg || {};
     const ks = Array.isArray(c.kickClientsOnSlowNetwork) ? (c.kickClientsOnSlowNetwork as number[]) : [0, 0, 0, 0];
     setHostname(String(c.hostname ?? ""));
     setPassword(String(c.password ?? ""));
@@ -292,7 +403,7 @@ function SharedSettingsCard({
     setDisableVoN(Number(c.disableVoN ?? 0) !== 0);
     setVonCodecQuality(String(c.vonCodecQuality ?? ""));
     setPersistent(c.persistent == null ? true : Number(c.persistent) !== 0);
-  }, [shared?.id, shared?.serverCfg, shared?.version]);
+  }, [shared.id, shared.serverCfg, shared.version]);
 
   function optNum(raw: string): number | undefined {
     const s = raw.trim();
@@ -302,7 +413,6 @@ function SharedSettingsCard({
   }
 
   async function save() {
-    if (!shared) return;
     setSaving(true);
     try {
       const adminList = admins
@@ -381,7 +491,7 @@ function SharedSettingsCard({
 
       await api.put(`/shared-cfg-presets/${shared.id}`, { serverCfg });
       toast.success("Shared settings saved");
-      onChanged();
+      onSaved();
     } catch (e: any) {
       toast.error("Save failed", { message: e.message });
     } finally {
@@ -390,212 +500,210 @@ function SharedSettingsCard({
   }
 
   return (
-    <div className="card" id="shared-settings" style={{ marginBottom: 16 }}>
-      <div className="row between" style={{ marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
-        <h2 style={{ margin: 0 }}>Shared settings</h2>
-        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-          {shared && (
-            <>
-              <span className="muted small">v{shared.version || 1}</span>
-              <button type="button" className="btn small" onClick={() => onHistory(shared)}>History</button>
-            </>
-          )}
-        </div>
-      </div>
-      <div className="muted small" style={{ marginBottom: 12 }}>
-        One global server.cfg baseline for every instance. On profile apply, these values are merged with the mission profile (profile overrides win on the same key).
-      </div>
-
-      {loading || !shared ? (
-        <div className="muted">Loading shared settings…</div>
-      ) : (
+    <Modal
+      title="Shared settings"
+      onClose={onClose}
+      wide
+      footer={
         <>
-          <div className="grid cols-2" style={{ gap: 12 }}>
-            <div>
-              <label>Default hostname</label>
-              <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="Used if profile leaves hostname blank" />
-            </div>
-            <div>
-              <label>Max players</label>
-              <input type="number" min={1} max={200} value={maxPlayers} onChange={(e) => setMaxPlayers(e.target.value)} />
-            </div>
-            <div>
-              <label>Server password</label>
-              <input value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
-            </div>
-            <div>
-              <label>Admin password (<code>passwordAdmin</code>)</label>
-              <input value={passwordAdmin} onChange={(e) => setPasswordAdmin(e.target.value)} autoComplete="off" />
-            </div>
-            <div>
-              <label>Server command password</label>
-              <input value={serverCommandPassword} onChange={(e) => setServerCommandPassword(e.target.value)} autoComplete="off" />
-            </div>
-            <div>
-              <label>Signature verification</label>
-              <select value={verifySignatures} onChange={(e) => setVerifySignatures(e.target.value === "0" ? "0" : "2")}>
-                <option value="2">Verify signatures</option>
-                <option value="0">Do not verify</option>
-              </select>
-            </div>
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label>Admin Steam IDs (<code>admins[]</code>)</label>
-              <textarea
-                rows={3}
-                value={admins}
-                onChange={(e) => setAdmins(e.target.value)}
-                placeholder="One Steam64 ID per line (or comma-separated)"
-              />
-            </div>
-            <div>
-              <label className="row" style={{ margin: 0, gap: 8 }}>
-                <input type="checkbox" style={{ width: "auto" }} checked={battlEye} onChange={(e) => setBattlEye(e.target.checked)} />
-                <span>BattlEye</span>
-              </label>
-            </div>
-          </div>
-
-          <h3 style={{ marginTop: 20, marginBottom: 12 }}>Networking</h3>
-          <div className="grid cols-2" style={{ gap: 12 }}>
-            <div>
-              <label>
-                Steam query packet (<code>steamProtocolMaxDataSize</code>)
-              </label>
-              <input
-                type="number"
-                min={1024}
-                max={8192}
-                step={256}
-                value={steamProtocolMaxDataSize}
-                onChange={(e) => setSteamProtocolMaxDataSize(e.target.value)}
-                placeholder="Auto"
-              />
-            </div>
-            <div>
-              <label>
-                Disconnect timeout (<code>DisconnectTimeout</code>)
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={90}
-                value={disconnectTimeout}
-                onChange={(e) => setDisconnectTimeout(e.target.value)}
-                placeholder="15"
-              />
-            </div>
-            <div>
-              <label>
-                Max ping (<code>MaxPing</code>)
-              </label>
-              <input
-                type="number"
-                min={-1}
-                value={maxPing}
-                onChange={(e) => setMaxPing(e.target.value)}
-                placeholder="-1"
-              />
-            </div>
-            <div>
-              <label>
-                Max packet loss % (<code>MaxPacketLoss</code>)
-              </label>
-              <input
-                type="number"
-                min={-1}
-                value={maxPacketLoss}
-                onChange={(e) => setMaxPacketLoss(e.target.value)}
-                placeholder="-1"
-              />
-            </div>
-            <div>
-              <label>
-                Max desync (<code>MaxDesync</code>)
-              </label>
-              <input
-                type="number"
-                min={-1}
-                value={maxDesync}
-                onChange={(e) => setMaxDesync(e.target.value)}
-                placeholder="-1"
-              />
-            </div>
-            <div>
-              <label>
-                VoN quality (<code>vonCodecQuality</code>)
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={30}
-                value={vonCodecQuality}
-                onChange={(e) => setVonCodecQuality(e.target.value)}
-                placeholder="3"
-              />
-            </div>
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label style={{ marginBottom: 6 }}>
-                Kick on slow network (<code>kickClientsOnSlowNetwork[]</code>)
-              </label>
-              <div className="row" style={{ flexWrap: "wrap", gap: 16 }}>
-                <label className="row" style={{ margin: 0, gap: 8 }}>
-                  <input type="checkbox" style={{ width: "auto" }} checked={kickOnPing} onChange={(e) => setKickOnPing(e.target.checked)} />
-                  <span>MaxPing</span>
-                </label>
-                <label className="row" style={{ margin: 0, gap: 8 }}>
-                  <input type="checkbox" style={{ width: "auto" }} checked={kickOnLoss} onChange={(e) => setKickOnLoss(e.target.checked)} />
-                  <span>MaxPacketLoss</span>
-                </label>
-                <label className="row" style={{ margin: 0, gap: 8 }}>
-                  <input type="checkbox" style={{ width: "auto" }} checked={kickOnDesync} onChange={(e) => setKickOnDesync(e.target.checked)} />
-                  <span>MaxDesync</span>
-                </label>
-                <label className="row" style={{ margin: 0, gap: 8 }}>
-                  <input type="checkbox" style={{ width: "auto" }} checked={kickOnTimeout} onChange={(e) => setKickOnTimeout(e.target.checked)} />
-                  <span>DisconnectTimeout</span>
-                </label>
-              </div>
-            </div>
-            <div>
-              <label className="row" style={{ margin: 0, gap: 8 }}>
-                <input type="checkbox" style={{ width: "auto" }} checked={autoSelectMission} onChange={(e) => setAutoSelectMission(e.target.checked)} />
-                <span>Auto-select mission (<code>autoSelectMission</code>)</span>
-              </label>
-            </div>
-            <div>
-              <label className="row" style={{ margin: 0, gap: 8 }}>
-                <input type="checkbox" style={{ width: "auto" }} checked={kickDuplicate} onChange={(e) => setKickDuplicate(e.target.checked)} />
-                <span>Kick duplicate IDs (<code>kickDuplicate</code>)</span>
-              </label>
-            </div>
-            <div>
-              <label className="row" style={{ margin: 0, gap: 8 }}>
-                <input type="checkbox" style={{ width: "auto" }} checked={upnp} onChange={(e) => setUpnp(e.target.checked)} />
-                <span>UPnP port mapping (<code>upnp</code>)</span>
-              </label>
-            </div>
-            <div>
-              <label className="row" style={{ margin: 0, gap: 8 }}>
-                <input type="checkbox" style={{ width: "auto" }} checked={disableVoN} onChange={(e) => setDisableVoN(e.target.checked)} />
-                <span>Disable VoN (<code>disableVoN</code>)</span>
-              </label>
-            </div>
-            <div>
-              <label className="row" style={{ margin: 0, gap: 8 }}>
-                <input type="checkbox" style={{ width: "auto" }} checked={persistent} onChange={(e) => setPersistent(e.target.checked)} />
-                <span>Persistent mission (<code>persistent</code>)</span>
-              </label>
-            </div>
-          </div>
-
-          <div className="row" style={{ marginTop: 12 }}>
-            <button className="btn" disabled={saving || !shared} onClick={() => void save()}>
+          <button type="button" className="btn ghost" onClick={onHistory} disabled={saving}>
+            History
+          </button>
+          <div className="modal-footer-actions">
+            <button type="button" className="btn ghost" onClick={onClose} disabled={saving}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={saving} onClick={() => void save()}>
               {saving ? "Saving…" : "Save shared settings"}
             </button>
           </div>
         </>
-      )}
-    </div>
+      }
+    >
+      <div className="muted small" style={{ marginTop: 0, marginBottom: 12 }}>
+        One global server.cfg baseline for every instance. On profile apply, these values are merged with the mission
+        profile (profile overrides win on the same key).
+        <span className="muted" style={{ marginLeft: 8 }}>v{shared.version || 1}</span>
+      </div>
+
+      <div className="grid cols-2" style={{ gap: 12 }}>
+        <div>
+          <label>Default hostname</label>
+          <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="Used if profile leaves hostname blank" />
+        </div>
+        <div>
+          <label>Max players</label>
+          <input type="number" min={1} max={200} value={maxPlayers} onChange={(e) => setMaxPlayers(e.target.value)} />
+        </div>
+        <div>
+          <label>Server password</label>
+          <input value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
+        </div>
+        <div>
+          <label>Admin password (<code>passwordAdmin</code>)</label>
+          <input value={passwordAdmin} onChange={(e) => setPasswordAdmin(e.target.value)} autoComplete="off" />
+        </div>
+        <div>
+          <label>Server command password</label>
+          <input value={serverCommandPassword} onChange={(e) => setServerCommandPassword(e.target.value)} autoComplete="off" />
+        </div>
+        <div>
+          <label>Signature verification</label>
+          <select value={verifySignatures} onChange={(e) => setVerifySignatures(e.target.value === "0" ? "0" : "2")}>
+            <option value="2">Verify signatures</option>
+            <option value="0">Do not verify</option>
+          </select>
+        </div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label>Admin Steam IDs (<code>admins[]</code>)</label>
+          <textarea
+            rows={3}
+            value={admins}
+            onChange={(e) => setAdmins(e.target.value)}
+            placeholder="One Steam64 ID per line (or comma-separated)"
+          />
+        </div>
+        <div>
+          <label className="check-option" style={{ marginBottom: 0 }}>
+            <input type="checkbox" checked={battlEye} onChange={(e) => setBattlEye(e.target.checked)} />
+            <span className="check-title">BattlEye</span>
+          </label>
+        </div>
+      </div>
+
+      <h3 style={{ marginTop: 20, marginBottom: 12 }}>Networking</h3>
+      <div className="grid cols-2" style={{ gap: 12 }}>
+        <div>
+          <label>
+            Steam query packet (<code>steamProtocolMaxDataSize</code>)
+          </label>
+          <input
+            type="number"
+            min={1024}
+            max={8192}
+            step={256}
+            value={steamProtocolMaxDataSize}
+            onChange={(e) => setSteamProtocolMaxDataSize(e.target.value)}
+            placeholder="Auto"
+          />
+        </div>
+        <div>
+          <label>
+            Disconnect timeout (<code>DisconnectTimeout</code>)
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={90}
+            value={disconnectTimeout}
+            onChange={(e) => setDisconnectTimeout(e.target.value)}
+            placeholder="15"
+          />
+        </div>
+        <div>
+          <label>
+            Max ping (<code>MaxPing</code>)
+          </label>
+          <input
+            type="number"
+            min={-1}
+            value={maxPing}
+            onChange={(e) => setMaxPing(e.target.value)}
+            placeholder="-1"
+          />
+        </div>
+        <div>
+          <label>
+            Max packet loss % (<code>MaxPacketLoss</code>)
+          </label>
+          <input
+            type="number"
+            min={-1}
+            value={maxPacketLoss}
+            onChange={(e) => setMaxPacketLoss(e.target.value)}
+            placeholder="-1"
+          />
+        </div>
+        <div>
+          <label>
+            Max desync (<code>MaxDesync</code>)
+          </label>
+          <input
+            type="number"
+            min={-1}
+            value={maxDesync}
+            onChange={(e) => setMaxDesync(e.target.value)}
+            placeholder="-1"
+          />
+        </div>
+        <div>
+          <label>
+            VoN quality (<code>vonCodecQuality</code>)
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={30}
+            value={vonCodecQuality}
+            onChange={(e) => setVonCodecQuality(e.target.value)}
+            placeholder="3"
+          />
+        </div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={{ marginBottom: 6 }}>
+            Kick on slow network (<code>kickClientsOnSlowNetwork[]</code>)
+          </label>
+          <div className="row" style={{ flexWrap: "wrap", gap: 16 }}>
+            <label className="check-option" style={{ marginBottom: 0 }}>
+              <input type="checkbox" checked={kickOnPing} onChange={(e) => setKickOnPing(e.target.checked)} />
+              <span className="check-title">MaxPing</span>
+            </label>
+            <label className="check-option" style={{ marginBottom: 0 }}>
+              <input type="checkbox" checked={kickOnLoss} onChange={(e) => setKickOnLoss(e.target.checked)} />
+              <span className="check-title">MaxPacketLoss</span>
+            </label>
+            <label className="check-option" style={{ marginBottom: 0 }}>
+              <input type="checkbox" checked={kickOnDesync} onChange={(e) => setKickOnDesync(e.target.checked)} />
+              <span className="check-title">MaxDesync</span>
+            </label>
+            <label className="check-option" style={{ marginBottom: 0 }}>
+              <input type="checkbox" checked={kickOnTimeout} onChange={(e) => setKickOnTimeout(e.target.checked)} />
+              <span className="check-title">DisconnectTimeout</span>
+            </label>
+          </div>
+        </div>
+        <div>
+          <label className="check-option" style={{ marginBottom: 0 }}>
+            <input type="checkbox" checked={autoSelectMission} onChange={(e) => setAutoSelectMission(e.target.checked)} />
+            <span className="check-title">Auto-select mission (<code>autoSelectMission</code>)</span>
+          </label>
+        </div>
+        <div>
+          <label className="check-option" style={{ marginBottom: 0 }}>
+            <input type="checkbox" checked={kickDuplicate} onChange={(e) => setKickDuplicate(e.target.checked)} />
+            <span className="check-title">Kick duplicate IDs (<code>kickDuplicate</code>)</span>
+          </label>
+        </div>
+        <div>
+          <label className="check-option" style={{ marginBottom: 0 }}>
+            <input type="checkbox" checked={upnp} onChange={(e) => setUpnp(e.target.checked)} />
+            <span className="check-title">UPnP port mapping (<code>upnp</code>)</span>
+          </label>
+        </div>
+        <div>
+          <label className="check-option" style={{ marginBottom: 0 }}>
+            <input type="checkbox" checked={disableVoN} onChange={(e) => setDisableVoN(e.target.checked)} />
+            <span className="check-title">Disable VoN (<code>disableVoN</code>)</span>
+          </label>
+        </div>
+        <div>
+          <label className="check-option" style={{ marginBottom: 0 }}>
+            <input type="checkbox" checked={persistent} onChange={(e) => setPersistent(e.target.checked)} />
+            <span className="check-title">Persistent mission (<code>persistent</code>)</span>
+          </label>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -614,26 +722,21 @@ function ProfileEditor({
   const mods = useList<Mod[]>(() => api.get("/mods"));
   const missions = useList<Mission[]>(() => api.get("/missions"));
   const modlists = useList<Modlist[]>(() => api.get("/modlists"));
+  const difficultyPresets = useList<DifficultyPreset[]>(() => api.get("/difficulty-presets"));
   const [name, setName] = useState(profile?.name || "");
   const [modlistId, setModlistId] = useState(profile?.modlistId || "");
   const [selMods, setSelMods] = useState<string[]>(profile?.mods || []);
   const [selServerMods, setSelServerMods] = useState<string[]>(profile?.serverMods || []);
-  const [missionId, setMissionId] = useState(profile?.missionId || "");
-  const [hostname, setHostname] = useState((profile?.serverCfgOverrides?.hostname as string) || "");
-  const [password, setPassword] = useState((profile?.serverCfgOverrides?.password as string) || "");
-  const [passwordAdmin, setPasswordAdmin] = useState((profile?.serverCfgOverrides?.passwordAdmin as string) || "");
-  const [serverCommandPassword, setServerCommandPassword] = useState(
-    (profile?.serverCfgOverrides?.serverCommandPassword as string) || "",
+  const [missionSource, setMissionSource] = useState<"library" | "mod">(
+    profile?.missionSource === "mod" ? "mod" : "library",
   );
-  const [adminsOverride, setAdminsOverride] = useState(() => {
-    const a = profile?.serverCfgOverrides?.admins;
-    if (Array.isArray(a)) return (a as string[]).join("\n");
-    return String(a || "");
-  });
+  const [missionId, setMissionId] = useState(profile?.missionId || "");
+  const [missionTemplate, setMissionTemplate] = useState(profile?.missionTemplate || "");
+  const [hostname, setHostname] = useState((profile?.serverCfgOverrides?.hostname as string) || "");
   const [forcedDifficulty, setForcedDifficulty] = useState<DifficultyPresetName | "">(
     (normalizeForcedDifficultyUi(profile?.serverCfgOverrides?.forcedDifficulty) as DifficultyPresetName | "") || "Regular",
   );
-  const [customDiff, setCustomDiff] = useState(() => mergeCustomDifficulty(profile?.customDifficulty));
+  const [difficultyPresetId, setDifficultyPresetId] = useState(profile?.difficultyPresetId || "");
   const [dlcs, setDlcs] = useState<string[]>(profile?.dlcs || []);
   const [extraArgs, setExtraArgs] = useState((profile?.extraArgs || []).join(" "));
   const [recommendedHeadlessCount, setRecommendedHeadlessCount] = useState<string>(
@@ -662,20 +765,38 @@ function ProfileEditor({
     [modlistClientIds, modlistServerIds],
   );
 
-  const filterQ = modFilter.trim().toLowerCase();
-  const clientCatalog = useMemo(() => {
-    const list = (mods.data || []).filter((m) => m.kind === "client");
-    if (!filterQ) return list;
-    return list.filter((m) => m.name.toLowerCase().includes(filterQ) || m.workshopId.includes(filterQ));
-  }, [mods.data, filterQ]);
-  const serverCatalog = useMemo(() => {
-    const list = (mods.data || []).filter((m) => m.kind === "server");
-    if (!filterQ) return list;
-    return list.filter((m) => m.name.toLowerCase().includes(filterQ) || m.workshopId.includes(filterQ));
-  }, [mods.data, filterQ]);
+  const modNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const m of mods.data || []) map.set(m.workshopId, m.name);
+    return map;
+  }, [mods.data]);
 
-  const extraClientCount = selMods.filter((id) => !modlistAllIds.has(id)).length;
-  const extraServerCount = selServerMods.filter((id) => !modlistAllIds.has(id)).length;
+  const extraClientIds = useMemo(
+    () => selMods.filter((id) => !modlistAllIds.has(id)),
+    [selMods, modlistAllIds],
+  );
+  const extraServerIds = useMemo(
+    () => selServerMods.filter((id) => !modlistAllIds.has(id)),
+    [selServerMods, modlistAllIds],
+  );
+  const extraSelectedIds = useMemo(
+    () => new Set([...extraClientIds, ...extraServerIds]),
+    [extraClientIds, extraServerIds],
+  );
+  const extraClientCount = extraClientIds.length;
+  const extraServerCount = extraServerIds.length;
+  const [dragOverColumn, setDragOverColumn] = useState<"client" | "server" | null>(null);
+
+  const filterQ = modFilter.trim().toLowerCase();
+  const libraryCatalog = useMemo(() => {
+    const list = mods.data || [];
+    return list.filter((m) => {
+      if (extraSelectedIds.has(m.workshopId)) return false;
+      if (modlistAllIds.has(m.workshopId)) return false;
+      if (!filterQ) return true;
+      return m.name.toLowerCase().includes(filterQ) || m.workshopId.includes(filterQ);
+    });
+  }, [mods.data, filterQ, extraSelectedIds, modlistAllIds]);
 
   useEffect(() => {
     if (!modlistAllIds.size) return;
@@ -693,14 +814,26 @@ function ProfileEditor({
     set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   }
 
-  function toggleExtra(
-    list: string[],
-    set: (v: string[]) => void,
-    id: string,
-    blocked: Set<string>,
-  ) {
-    if (blocked.has(id)) return;
-    toggle(list, set, id);
+  function removeExtra(id: string) {
+    setSelMods((prev) => prev.filter((x) => x !== id));
+    setSelServerMods((prev) => prev.filter((x) => x !== id));
+  }
+
+  function moveExtraTo(id: string, side: "client" | "server") {
+    if (modlistAllIds.has(id)) return;
+    if (side === "client") {
+      setSelServerMods((prev) => prev.filter((x) => x !== id));
+      setSelMods((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    } else {
+      setSelMods((prev) => prev.filter((x) => x !== id));
+      setSelServerMods((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    }
+  }
+
+  /** Library click: add as client extra (selected mods are hidden from the library). */
+  function addExtraFromLibrary(id: string) {
+    if (modlistAllIds.has(id) || extraSelectedIds.has(id)) return;
+    moveExtraTo(id, "client");
   }
 
   function selectModlist(id: string) {
@@ -734,7 +867,9 @@ function ProfileEditor({
       const titles = Object.fromEntries((r.mods || []).map((m) => [m.workshopId, m.title || m.workshopId]));
       setDepsPreview({ added: r.added || [], titles });
       if (mergeIntoSelection && (r.added || []).length) {
-        const toAdd = (r.added || []).filter((id) => !selMods.includes(id) && !modlistAllIds.has(id));
+        const toAdd = (r.added || []).filter(
+          (id) => !selMods.includes(id) && !selServerMods.includes(id) && !modlistAllIds.has(id),
+        );
         if (!toAdd.length) {
           toast.info("Deps already covered", {
             message: "Everything Steam requires is already on the modlist or extras.",
@@ -767,40 +902,44 @@ function ProfileEditor({
     }
   }
 
-  function setOption(key: string, value: number) {
-    setCustomDiff((prev) => ({ ...prev, options: { ...prev.options, [key]: value } }));
-  }
-
   async function save() {
+    if (forcedDifficulty === "Custom" && !difficultyPresetId) {
+      toast.error("Pick a custom difficulty preset", {
+        message: "Create one under Difficulties, then attach it here.",
+      });
+      return;
+    }
     const prevOverrides = { ...(profile?.serverCfgOverrides || {}) };
     const serverCfgOverrides: Record<string, unknown> = { ...prevOverrides };
+    // Shared-settings-only — strip if present on older profiles
+    for (const k of [
+      "password",
+      "passwordAdmin",
+      "passwordadmin",
+      "serverCommandPassword",
+      "servercommandpassword",
+      "admins",
+      "adminIds",
+    ]) {
+      delete serverCfgOverrides[k];
+    }
     if (hostname.trim()) serverCfgOverrides.hostname = hostname.trim();
     else delete serverCfgOverrides.hostname;
-    if (password) serverCfgOverrides.password = password;
-    else delete serverCfgOverrides.password;
-    if (passwordAdmin) serverCfgOverrides.passwordAdmin = passwordAdmin;
-    else delete serverCfgOverrides.passwordAdmin;
-    if (serverCommandPassword) serverCfgOverrides.serverCommandPassword = serverCommandPassword;
-    else delete serverCfgOverrides.serverCommandPassword;
-    const adminList = adminsOverride
-      .split(/[\s,;]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (adminList.length) serverCfgOverrides.admins = adminList;
-    else delete serverCfgOverrides.admins;
     if (forcedDifficulty) serverCfgOverrides.forcedDifficulty = forcedDifficulty;
     else delete serverCfgOverrides.forcedDifficulty;
 
     const body = {
       name,
       modlistId: modlistId || null,
+      difficultyPresetId: forcedDifficulty === "Custom" ? difficultyPresetId || null : null,
+      missionSource,
+      missionId: missionSource === "library" ? missionId || null : null,
+      missionTemplate: missionSource === "mod" ? missionTemplate.trim() : "",
       mods: uniqueIds(selMods.filter((id) => !modlistAllIds.has(id))),
       serverMods: uniqueIds(selServerMods.filter((id) => !modlistAllIds.has(id))),
-      missionId: missionId || null,
       serverCfgOverrides,
       basicCfgOverrides,
       extraArgs: extraArgs.split(/\s+/).map((s) => s.trim()).filter(Boolean),
-      customDifficulty: customDiff,
       dlcs,
       recommendedHeadlessCount:
         recommendedHeadlessCount.trim() === ""
@@ -815,131 +954,72 @@ function ProfileEditor({
     } catch (e: any) { toast.error("Save failed", { message: e.message }); }
   }
 
-  const groups = [...new Set(DIFFICULTY_OPTIONS.map((o) => o.group))];
-
   return (
-    <Modal title={profile ? "Edit profile" : "New profile"} onClose={onClose} wide>
+    <Modal
+      title={profile ? "Edit profile" : "New profile"}
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          {profile && onHistory && (
+            <button type="button" className="btn" onClick={onHistory}>
+              History{profile.version != null ? ` · v${profile.version}` : ""}
+            </button>
+          )}
+          <div className="modal-footer-actions">
+            <button className="btn primary" onClick={save}>
+              Save profile
+            </button>
+          </div>
+        </>
+      }
+    >
       <div className="grid" style={{ gap: 12 }}>
         <div><label>Name</label><input value={name} onChange={(e) => setName(e.target.value)} /></div>
         <div>
-          <label>Server hostname override</label>
-          <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="Blank → shared settings / profile name" />
-        </div>
-        <div className="card" style={{ padding: 12, margin: 0 }}>
-          <strong style={{ display: "block", marginBottom: 4 }}>server.cfg overrides (optional)</strong>
-          <div className="muted small" style={{ marginBottom: 10 }}>
-            Leave blank to keep values from <strong>shared settings</strong>. On apply, the selected mission PBO is written into <code>class Missions</code>.
-          </div>
-          <div className="grid cols-2" style={{ gap: 10 }}>
-            <div>
-              <label>Password override</label>
-              <input value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
-            </div>
-            <div>
-              <label>Admin password override</label>
-              <input value={passwordAdmin} onChange={(e) => setPasswordAdmin(e.target.value)} autoComplete="off" />
-            </div>
-            <div>
-              <label>Server command password</label>
-              <input value={serverCommandPassword} onChange={(e) => setServerCommandPassword(e.target.value)} autoComplete="off" />
-            </div>
-            <div style={{ gridColumn: "1 / -1" }}>
-              <label>Admin Steam IDs override</label>
-              <textarea
-                rows={2}
-                value={adminsOverride}
-                onChange={(e) => setAdminsOverride(e.target.value)}
-                placeholder="Blank → use shared preset admins[]"
-              />
-            </div>
+          <label>Server hostname</label>
+          <input
+            value={hostname}
+            onChange={(e) => setHostname(e.target.value)}
+            placeholder="Blank → shared settings / profile name"
+          />
+          <div className="muted small" style={{ marginTop: 4 }}>
+            Passwords and admin Steam IDs come from{" "}
+            <Link to="/profiles#shared-settings">shared settings</Link> only.
           </div>
         </div>
 
         <div>
           <label>Difficulty</label>
-          <select value={forcedDifficulty} onChange={(e) => setForcedDifficulty(e.target.value as DifficultyPresetName | "")}>
+          <select
+            value={forcedDifficulty}
+            onChange={(e) => {
+              const next = e.target.value as DifficultyPresetName | "";
+              setForcedDifficulty(next);
+              if (next !== "Custom") setDifficultyPresetId("");
+            }}
+          >
             {FORCED_DIFFICULTY_CHOICES.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
           <div className="muted small" style={{ marginTop: 4 }}>
-            Written as <code>forcedDifficulty</code> in server.cfg. Custom options go to <code>Users/server/server.Arma3Profile</code> on apply.
+            Written as forced difficulty in server.cfg. Custom uses a preset for the Arma 3 profile on apply.
           </div>
         </div>
 
         {forcedDifficulty === "Custom" && (
-          <div className="card" style={{ padding: 12, margin: 0 }}>
-            <strong style={{ display: "block", marginBottom: 8 }}>Custom difficulty</strong>
-            {groups.map((group) => (
-              <div key={group} style={{ marginBottom: 12 }}>
-                <div className="muted small" style={{ marginBottom: 6 }}>{group}</div>
-                <div className="grid" style={{ gap: 8 }}>
-                  {DIFFICULTY_OPTIONS.filter((o) => o.group === group).map((o) => (
-                    <div key={o.key} className="row between" style={{ gap: 8, flexWrap: "wrap" }}>
-                      <label style={{ margin: 0, flex: "1 1 140px" }}>{o.label}</label>
-                      {o.max === 1 ? (
-                        <label className="row" style={{ margin: 0 }}>
-                          <input
-                            type="checkbox"
-                            style={{ width: "auto" }}
-                            checked={!!customDiff.options[o.key]}
-                            onChange={(e) => setOption(o.key, e.target.checked ? 1 : 0)}
-                          />
-                          Enabled
-                        </label>
-                      ) : (
-                        <select
-                          style={{ maxWidth: 180 }}
-                          value={customDiff.options[o.key] ?? 0}
-                          onChange={(e) => setOption(o.key, Number(e.target.value))}
-                        >
-                          {Array.from({ length: o.max + 1 }, (_, i) => (
-                            <option key={i} value={i}>
-                              {optionValueLabel(o.key, i, o.max)}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-            <div className="grid cols-3" style={{ gap: 10, marginTop: 8 }}>
-              <div>
-                <label>AI level preset</label>
-                <select
-                  value={customDiff.aiLevelPreset}
-                  onChange={(e) => setCustomDiff((p) => ({ ...p, aiLevelPreset: Number(e.target.value) }))}
-                >
-                  <option value={0}>Low</option>
-                  <option value={1}>Normal</option>
-                  <option value={2}>High</option>
-                  <option value={3}>Custom</option>
-                </select>
-              </div>
-              <div>
-                <label>skillAI (0–1)</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={customDiff.skillAI}
-                  disabled={customDiff.aiLevelPreset !== 3}
-                  onChange={(e) => setCustomDiff((p) => ({ ...p, skillAI: Number(e.target.value) }))}
-                />
-              </div>
-              <div>
-                <label>precisionAI (0–1)</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={customDiff.precisionAI}
-                  disabled={customDiff.aiLevelPreset !== 3}
-                  onChange={(e) => setCustomDiff((p) => ({ ...p, precisionAI: Number(e.target.value) }))}
-                />
-              </div>
+          <div>
+            <label>Custom difficulty preset</label>
+            <select value={difficultyPresetId} onChange={(e) => setDifficultyPresetId(e.target.value)}>
+              <option value="">— pick a preset —</option>
+              {(difficultyPresets.data || []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <div className="muted small" style={{ marginTop: 4 }}>
+              <Link to="/difficulties">Manage difficulty presets</Link>
+              {(difficultyPresets.data || []).length === 0 && " — create one first."}
             </div>
           </div>
         )}
@@ -963,10 +1043,78 @@ function ProfileEditor({
           </div>
         </div>
 
+        <div>
+          <label>Mission</label>
+          <select
+            value={missionSource}
+            onChange={(e) => setMissionSource(e.target.value === "mod" ? "mod" : "library")}
+          >
+            <option value="library">Library (.pbo)</option>
+            <option value="mod">From mod (template)</option>
+          </select>
+          <div className="muted small" style={{ marginTop: 4 }}>
+            {missionSource === "library"
+              ? "Upload and approve a .pbo under Missions. Apply copies it to the host."
+              : "Use when the mission ships inside a Workshop mod (e.g. Antistasi). Apply writes the template only — no PBO deploy, and no automatic -autoInit."}
+          </div>
+        </div>
+
+        {missionSource === "library" ? (
+          <div>
+            <label>Library mission</label>
+            <select value={missionId} onChange={(e) => setMissionId(e.target.value)}>
+              <option value="">— none —</option>
+              {(missions.data || []).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            {(missions.data || []).length === 0 && (
+              <div className="muted small" style={{ marginTop: 4 }}>
+                No missions in the library yet. Upload and approve a .pbo from <Link to="/missions">Missions</Link>.
+              </div>
+            )}
+          </div>
+        ) : (
+          <div>
+            <label>Mission template</label>
+            <input
+              value={missionTemplate}
+              onChange={(e) => setMissionTemplate(e.target.value)}
+              placeholder="e.g. Antistasi_Ultimate.Altis"
+            />
+            <div className="muted small" style={{ marginTop: 4 }}>
+              Exact Arma template name from the mod (map suffix included). Not a file upload.
+              Apply selects it in server.cfg but does not force <code>-autoInit</code> (that often
+              loops on missions like Antistasi). Add <code>-autoInit</code> under extra launch args
+              only if you need auto-start.
+            </div>
+          </div>
+        )}
+        <div>
+          <label>Extra launch args (optional)</label>
+          <input value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} placeholder="e.g. -enableHT" />
+        </div>
+        <div>
+          <label>Recommended local HCs (optional hint)</label>
+          <input
+            type="number"
+            min={0}
+            max={8}
+            value={recommendedHeadlessCount}
+            onChange={(e) => setRecommendedHeadlessCount(e.target.value)}
+            placeholder="Blank = no recommendation"
+          />
+          <div className="muted small" style={{ marginTop: 4 }}>
+            Soft hint for operators. Instance page still controls how many HCs actually run.
+          </div>
+        </div>
+
         <div className="card" style={{ padding: 12, margin: 0 }}>
           <strong style={{ display: "block", marginBottom: 4 }}>Mods</strong>
           <div className="muted small" style={{ marginBottom: 12 }}>
-            Start from a modlist, then add extras. Mods already on the list stay marked and can’t be selected twice.
+            Start from a modlist, then add extras. Mods already on the list or selected stay out of the library.
           </div>
 
           <div>
@@ -998,21 +1146,113 @@ function ProfileEditor({
               </button>
               {showListContents && (
                 <div className="pill-list" style={{ marginTop: 8 }}>
-                  {attached.entries.map((e) => (
-                    <span
-                      key={`${e.kind}-${e.workshopId}`}
-                      className="pill"
-                      title={e.workshopId}
-                      style={{ opacity: 0.75 }}
-                    >
-                      {e.kind === "server" ? "srv · " : ""}
-                      {e.name || e.workshopId}
-                    </span>
-                  ))}
+                  {attached.entries.map((e) => {
+                    const label =
+                      (e.name && !/^https?:\/\//i.test(e.name) && !/steamcommunity\.com/i.test(e.name)
+                        ? e.name
+                        : null) ||
+                      modNameById.get(e.workshopId) ||
+                      e.workshopId;
+                    return (
+                      <span
+                        key={`${e.kind}-${e.workshopId}`}
+                        className="pill"
+                        title={e.workshopId}
+                        style={{ opacity: 0.75 }}
+                      >
+                        {e.kind === "server" ? "srv · " : ""}
+                        {label}
+                      </span>
+                    );
+                  })}
                 </div>
               )}
             </div>
           )}
+
+          <div style={{ marginTop: 14 }}>
+            <label>
+              Selected extras
+              {extraClientCount + extraServerCount > 0 ? (
+                <span className="muted">
+                  {" "}
+                  · {extraClientCount} client / {extraServerCount} server
+                </span>
+              ) : null}
+            </label>
+            <div className="muted small" style={{ marginBottom: 6 }}>
+              Drag a mod between columns to set client vs server. Or use the arrow on the pill.
+            </div>
+            <div className="extra-mods-columns">
+              {(
+                [
+                  { side: "client" as const, ids: extraClientIds, title: "Client (−mod)" },
+                  { side: "server" as const, ids: extraServerIds, title: "Server (−serverMod)" },
+                ] as const
+              ).map((col) => (
+                <div
+                  key={col.side}
+                  className={
+                    "extra-mods-column" + (dragOverColumn === col.side ? " drag-over" : "")
+                  }
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (dragOverColumn !== col.side) setDragOverColumn(col.side);
+                  }}
+                  onDragLeave={() => {
+                    setDragOverColumn((cur) => (cur === col.side ? null : cur));
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOverColumn(null);
+                    const id = e.dataTransfer.getData("text/workshop-id");
+                    if (id) moveExtraTo(id, col.side);
+                  }}
+                >
+                  <div className="extra-mods-column-title">{col.title}</div>
+                  <div className="pill-list">
+                    {col.ids.map((id) => (
+                      <span
+                        key={`${col.side}-${id}`}
+                        className="pill extra-mod-pill"
+                        draggable
+                        title={id}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/workshop-id", id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        onDragEnd={() => setDragOverColumn(null)}
+                      >
+                        <span className="extra-mod-pill-name">{modNameById.get(id) || id}</span>
+                        <button
+                          type="button"
+                          title={col.side === "client" ? "Move to server" : "Move to client"}
+                          aria-label={col.side === "client" ? "Move to server" : "Move to client"}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={() => moveExtraTo(id, col.side === "client" ? "server" : "client")}
+                        >
+                          {col.side === "client" ? "→" : "←"}
+                        </button>
+                        <button
+                          type="button"
+                          title="Remove"
+                          aria-label="Remove"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={() => removeExtra(id)}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                    {col.ids.length === 0 && (
+                      <span className="muted small">Drop mods here</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
           <div style={{ marginTop: 14 }}>
             <label>Filter library</label>
@@ -1024,66 +1264,27 @@ function ProfileEditor({
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <label>
-              Extra client mods
-              {extraClientCount > 0 ? (
-                <span className="muted"> · {extraClientCount} selected</span>
-              ) : null}
-            </label>
-            <div className="pill-list" style={{ marginTop: 6 }}>
-              {clientCatalog.map((m) => {
-                const inList = modlistAllIds.has(m.workshopId);
-                const selected = !inList && selMods.includes(m.workshopId);
-                return (
-                  <span
-                    key={m.id}
-                    className="pill"
-                    title={inList ? "Already on the modlist" : m.workshopId}
-                    style={{
-                      cursor: inList ? "default" : "pointer",
-                      opacity: inList ? 0.55 : 1,
-                      borderColor: selected ? "var(--accent)" : undefined,
-                    }}
-                    onClick={() => toggleExtra(selMods, setSelMods, m.workshopId, modlistAllIds)}
-                  >
-                    {inList ? "list · " : selected ? "✓ " : ""}
-                    {m.name}
-                  </span>
-                );
-              })}
-              {clientCatalog.length === 0 && <span className="muted small">No client mods match.</span>}
+            <label>Mod library</label>
+            <div className="muted small" style={{ marginBottom: 6 }}>
+              Click to add as a client extra. Modlist mods and selected extras are hidden here.
             </div>
-          </div>
-
-          <div style={{ marginTop: 12 }}>
-            <label>
-              Extra server mods
-              {extraServerCount > 0 ? (
-                <span className="muted"> · {extraServerCount} selected</span>
-              ) : null}
-            </label>
-            <div className="pill-list" style={{ marginTop: 6 }}>
-              {serverCatalog.map((m) => {
-                const inList = modlistAllIds.has(m.workshopId);
-                const selected = !inList && selServerMods.includes(m.workshopId);
-                return (
-                  <span
-                    key={m.id}
-                    className="pill"
-                    title={inList ? "Already on the modlist" : m.workshopId}
-                    style={{
-                      cursor: inList ? "default" : "pointer",
-                      opacity: inList ? 0.55 : 1,
-                      borderColor: selected ? "var(--accent)" : undefined,
-                    }}
-                    onClick={() => toggleExtra(selServerMods, setSelServerMods, m.workshopId, modlistAllIds)}
-                  >
-                    {inList ? "list · " : selected ? "✓ " : ""}
-                    {m.name}
-                  </span>
-                );
-              })}
-              {serverCatalog.length === 0 && <span className="muted small">No server mods match.</span>}
+            <div className="pill-list">
+              {libraryCatalog.map((m) => (
+                <span
+                  key={m.id}
+                  className="pill"
+                  title={m.workshopId}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => addExtraFromLibrary(m.workshopId)}
+                >
+                  {m.name}
+                </span>
+              ))}
+              {libraryCatalog.length === 0 && (
+                <span className="muted small">
+                  {filterQ ? "No mods match." : "No more mods to add."}
+                </span>
+              )}
             </div>
           </div>
 
@@ -1116,44 +1317,6 @@ function ProfileEditor({
             </div>
           )}
         </div>
-        <div>
-          <label>Mission</label>
-          <select value={missionId} onChange={(e) => setMissionId(e.target.value)}>
-            <option value="">— none —</option>
-            {(missions.data || []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-          {(missions.data || []).length === 0 && (
-            <div className="muted small" style={{ marginTop: 4 }}>
-              No missions in the library yet. Deploy an approved .pbo from <Link to="/missions">Missions</Link>.
-            </div>
-          )}
-        </div>
-        <div>
-          <label>Extra launch args (optional)</label>
-          <input value={extraArgs} onChange={(e) => setExtraArgs(e.target.value)} placeholder="-autoInit" />
-        </div>
-        <div>
-          <label>Recommended local HCs (optional hint)</label>
-          <input
-            type="number"
-            min={0}
-            max={8}
-            value={recommendedHeadlessCount}
-            onChange={(e) => setRecommendedHeadlessCount(e.target.value)}
-            placeholder="Blank = no recommendation"
-          />
-          <div className="muted small" style={{ marginTop: 4 }}>
-            Soft hint for operators. Instance page still controls how many HCs actually run.
-          </div>
-        </div>
-        <div className="row" style={{ gap: 8 }}>
-          {profile && onHistory && (
-            <button type="button" className="btn" onClick={onHistory}>
-              History{profile.version != null ? ` · v${profile.version}` : ""}
-            </button>
-          )}
-          <button className="btn primary" onClick={save}>Save profile</button>
-        </div>
       </div>
     </Modal>
   );
@@ -1172,11 +1335,4 @@ function normalizeForcedDifficultyUi(raw: unknown): string {
   const s = String(raw || "").trim();
   if (s === "Recruit" || s === "Regular" || s === "Veteran" || s === "Custom") return s;
   return "";
-}
-
-function optionValueLabel(key: string, value: number, max: number): string {
-  if (key === "tacticalPing") return OPTION_LABELS_3_PING[value] || String(value);
-  if (key === "thirdPersonView") return OPTION_LABELS_3P[value] || String(value);
-  if (max === 2) return OPTION_LABELS_2[value] || String(value);
-  return String(value);
 }

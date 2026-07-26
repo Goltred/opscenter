@@ -4,22 +4,29 @@ export function Modal({
   title,
   onClose,
   children,
+  footer,
   wide,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  /** Sticky action bar (Save / History / Cancel). Body scrolls independently. */
+  footer?: React.ReactNode;
   /** Wider dialog for dense forms (e.g. profile editor). Still capped by viewport. */
   wide?: boolean;
 }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className={`card modal${wide ? " modal-wide" : ""}`} onClick={(e) => e.stopPropagation()}>
-        <div className="row between">
+      <div
+        className={`card modal${wide ? " modal-wide" : ""}${footer ? " modal-with-footer" : ""}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="modal-header row between">
           <h2 style={{ margin: 0 }}>{title}</h2>
           <button className="btn ghost small" onClick={onClose}>✕</button>
         </div>
-        <div style={{ marginTop: 14 }}>{children}</div>
+        <div className="modal-body">{children}</div>
+        {footer != null && <div className="modal-footer">{footer}</div>}
       </div>
     </div>
   );

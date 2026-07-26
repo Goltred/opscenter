@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Host, Mod } from "../api";
 import { useAuth } from "../auth";
+import { parseWorkshopId } from "../workshopId";
 import { linkifyText } from "./linkify";
 import { useList } from "./ui";
+import { formatTimeWithSeconds } from "../formatTime";
+import { useModNameMap } from "../useModNameMap";
 
 type SteamStatus = {
   running?: boolean;
@@ -24,24 +27,15 @@ type ArmaInstall = {
   message?: string;
 };
 
-/** Accept a raw workshop ID or a Steam workshop URL. */
-export function parseWorkshopId(raw: string): string | null {
-  const s = raw.trim();
-  if (!s) return null;
-  if (/^\d{5,}$/.test(s)) return s;
-  try {
-    const u = new URL(s);
-    const id = u.searchParams.get("id");
-    if (id && /^\d+$/.test(id)) return id;
-  } catch {
-    /* not a full URL */
-  }
-  const m = /[?&]id=(\d+)/i.exec(s) || /filedetails\/.*?[/=](\d{5,})/i.exec(s);
-  return m ? m[1] : null;
-}
+type ModPresence = {
+  present: string[];
+  missing: string[];
+  sources?: Record<string, string>;
+  message?: string;
+};
 
 function stamp() {
-  return new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return formatTimeWithSeconds(new Date());
 }
 
 function branchLabel(install: ArmaInstall | null): string {
@@ -62,6 +56,7 @@ export function HostSteamCmdPanel({
   followOnly?: boolean;
 }) {
   const { can } = useAuth();
+  const modNames = useModNameMap();
   const mods = useList<Mod[]>(() => api.get("/mods"));
   const accounts = useList<SteamAccount[]>(() => api.get("/steam-accounts"));
   const [workshopInput, setWorkshopInput] = useState("");
@@ -71,6 +66,10 @@ export function HostSteamCmdPanel({
   const [install, setInstall] = useState<ArmaInstall | null>(null);
   const [installLoading, setInstallLoading] = useState(false);
   const [installError, setInstallError] = useState("");
+  const [presence, setPresence] = useState<ModPresence | null>(null);
+  const [presenceLoading, setPresenceLoading] = useState(false);
+  const [presenceError, setPresenceError] = useState("");
+  const [batchDownloading, setBatchDownloading] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
   const listId = `mod-workshop-ids-${host.id}`;
   const wasBusy = useRef(false);
@@ -140,7 +139,21 @@ export function HostSteamCmdPanel({
     }
   }
 
-  const busy = !!status.running || !!host.steamcmdRunning;
+  async function refreshPresence() {
+    if (!host.online || followOnly) return;
+    setPresenceLoading(true);
+    setPresenceError("");
+    try {
+      const data = await api.post<ModPresence>(`/hosts/${host.id}/mods/check`, {});
+      setPresence(data);
+    } catch (e: any) {
+      setPresenceError(e.message || "Could not check mods on this host");
+    } finally {
+      setPresenceLoading(false);
+    }
+  }
+
+  const busy = !!status.running || !!host.steamcmdRunning || batchDownloading;
 
   useEffect(() => {
     if (!wasBusy.current || busy || followOnly || !host.online) {
@@ -149,7 +162,13 @@ export function HostSteamCmdPanel({
     }
     wasBusy.current = busy;
     void refreshInstall();
+    void refreshPresence();
   }, [busy, followOnly, host.online]);
+
+  useEffect(() => {
+    if (!host.online || followOnly) return;
+    void refreshPresence();
+  }, [host.id, host.online, followOnly, mods.data]);
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -170,16 +189,66 @@ export function HostSteamCmdPanel({
       return;
     }
     try {
-      const r = await api.post<{ jobId: string }>("/steamcmd/download", {
-        hostId: host.id,
-        workshopId,
-        steamAccountId,
-        validate: false,
-      });
-      setStatus({ running: true, online: true, workshopId, jobId: r.jobId });
-      appendJobMarker(`mod download ${workshopId} (${r.jobId})`);
+      await downloadModById(workshopId);
+      setWorkshopInput("");
     } catch (e: any) {
       alert(e.message);
+    }
+  }
+
+  async function waitUntilIdle() {
+    for (let i = 0; i < 900; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const s = await api.get<SteamStatus>(`/steamcmd/status?hostId=${encodeURIComponent(host.id)}`);
+      setStatus(s);
+      if (!s.running) return s;
+    }
+    throw new Error("Timed out waiting for the download job to finish");
+  }
+
+  async function downloadModById(workshopId: string) {
+    if (!steamAccountId) {
+      throw new Error("Add a Steam account under Admin → Steam first");
+    }
+    const r = await api.post<{ jobId: string }>("/steamcmd/download", {
+      hostId: host.id,
+      workshopId,
+      steamAccountId,
+      validate: false,
+    });
+    setStatus({ running: true, online: true, workshopId, jobId: r.jobId });
+    appendJobMarker(`mod download ${workshopId} (${r.jobId})`);
+    await waitUntilIdle();
+  }
+
+  async function downloadMissingOne(workshopId: string) {
+    if (busy || noAccounts) return;
+    try {
+      setBatchDownloading(true);
+      await downloadModById(workshopId);
+      await refreshPresence();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setBatchDownloading(false);
+    }
+  }
+
+  async function downloadAllMissing() {
+    const ids = presence?.missing || [];
+    if (!ids.length || !steamAccountId) return;
+    if (!confirm(`Download ${ids.length} missing mod(s) onto this host? Jobs run one after another.`)) return;
+    setBatchDownloading(true);
+    try {
+      for (const id of ids) {
+        appendJobMarker(`batch: starting ${id}`);
+        await downloadModById(id);
+      }
+      await refreshPresence();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setBatchDownloading(false);
     }
   }
 
@@ -243,8 +312,11 @@ export function HostSteamCmdPanel({
   }
 
   const noAccounts = !accounts.loading && !(accounts.data || []).length;
-  const present = install?.armaServerPresent === true;
+  const armaPresent = install?.armaServerPresent === true;
   const onCreator = install?.onCreatorBranch === true;
+  const missingIds = presence?.missing || [];
+  const presentSet = new Set(presence?.present || []);
+  const libraryMods = mods.data || [];
 
   return (
     <div
@@ -332,6 +404,91 @@ export function HostSteamCmdPanel({
           </div>
 
           <div className="steam-panel-section">
+            <div className="row between" style={{ alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
+              <div>
+                <h3 style={{ margin: 0 }}>Library on this host</h3>
+                <p className="muted small" style={{ margin: "6px 0 0" }}>
+                  Panel library mods and whether they are on disk here.{" "}
+                  <Link to="/mods">Manage library</Link>
+                </p>
+              </div>
+              <div className="row" style={{ gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn small ghost"
+                  disabled={presenceLoading || busy}
+                  onClick={() => void refreshPresence()}
+                >
+                  {presenceLoading ? "Checking…" : "Refresh"}
+                </button>
+                {missingIds.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn small primary"
+                    disabled={busy || noAccounts}
+                    onClick={() => void downloadAllMissing()}
+                  >
+                    Download all missing ({missingIds.length})
+                  </button>
+                )}
+              </div>
+            </div>
+            {presenceError && <div className="warn small" style={{ marginTop: 8 }}>{presenceError}</div>}
+            {!libraryMods.length ? (
+              <div className="muted small" style={{ marginTop: 8 }}>
+                Library is empty. Add mods on the <Link to="/mods">Mods</Link> page first.
+              </div>
+            ) : (
+              <div style={{ marginTop: 10, maxHeight: compact ? 180 : 240, overflow: "auto" }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Mod</th>
+                      <th>On host</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {libraryMods.map((m) => {
+                      const onHost = presentSet.has(m.workshopId);
+                      const known = presence != null;
+                      return (
+                        <tr key={m.id}>
+                          <td>
+                            <div>{m.name}</div>
+                            <div className="muted small tag">{m.workshopId}</div>
+                          </td>
+                          <td>
+                            {!known ? (
+                              <span className="muted small">…</span>
+                            ) : onHost ? (
+                              <span className="badge stage-done">Present</span>
+                            ) : (
+                              <span className="badge warn">Missing</span>
+                            )}
+                          </td>
+                          <td>
+                            {known && !onHost && (
+                              <button
+                                type="button"
+                                className="btn small"
+                                disabled={busy || noAccounts}
+                                onClick={() => void downloadMissingOne(m.workshopId)}
+                              >
+                                Download
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="steam-panel-section">
             <div className="row between" style={{ alignItems: "flex-start", gap: 8 }}>
               <h3 style={{ margin: 0 }}>Arma dedicated server</h3>
               <button type="button" className="btn small ghost" onClick={() => void refreshInstall()} disabled={installLoading || busy}>
@@ -345,7 +502,7 @@ export function HostSteamCmdPanel({
             <div className="steam-install-status">
               <div>
                 <strong>{branchLabel(install)}</strong>
-                {present && onCreator && (
+                {armaPresent && onCreator && (
                   <span className="tag" style={{ marginLeft: 8 }}>
                     needed for SOG / Western Sahara / etc.
                   </span>
@@ -364,7 +521,7 @@ export function HostSteamCmdPanel({
               ) : null}
             </div>
             <div className="row" style={{ marginTop: 10, gap: 8, flexWrap: "wrap" }}>
-              {!present ? (
+              {!armaPresent ? (
                 <button
                   className="btn small primary"
                   disabled={busy || noAccounts}
@@ -391,7 +548,7 @@ export function HostSteamCmdPanel({
                   Update
                 </button>
               )}
-              {present && !onCreator && (
+              {armaPresent && !onCreator && (
                 <button
                   className="btn small"
                   disabled={busy || noAccounts}
@@ -405,7 +562,7 @@ export function HostSteamCmdPanel({
                   Switch to Creator DLC
                 </button>
               )}
-              {present && onCreator && (
+              {armaPresent && onCreator && (
                 <button
                   className="btn small"
                   disabled={busy || noAccounts}
@@ -419,7 +576,7 @@ export function HostSteamCmdPanel({
                   Leave Creator DLC
                 </button>
               )}
-              {present && (
+              {armaPresent && (
                 <button
                   className="btn small"
                   disabled={busy || noAccounts}
@@ -427,16 +584,16 @@ export function HostSteamCmdPanel({
                     void runServerUpdate({
                       beta: onCreator ? "creatordlc" : install?.beta || undefined,
                       validate: true,
-                      label: "Verify Arma server files",
+                      label: "Check / repair server files",
                     })
                   }
                 >
-                  Verify files
+                  Check server files
                 </button>
               )}
             </div>
             <div className="muted small" style={{ marginTop: 8 }}>
-              To remove an install, delete files under Arma root via Browse files — there is no SteamCMD uninstall.
+              To remove an install, delete files under Arma root via Browse files — there is no Steam uninstall button.
             </div>
           </div>
         </>
@@ -460,7 +617,7 @@ export function HostSteamCmdPanel({
           <div className="warn small" style={{ marginBottom: 8, whiteSpace: "pre-wrap" }}>
             {status.error.split("\n").map((line, i) => (
               <div key={i} style={{ marginTop: i ? 4 : 0 }}>
-                {linkifyText(line)}
+                {linkifyText(line, { modNames })}
               </div>
             ))}
           </div>

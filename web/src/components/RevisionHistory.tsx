@@ -1,23 +1,45 @@
 import { useEffect, useState } from "react";
-import { api, RevisionChange, RevisionMeta } from "../api";
+import { api, Mod, RevisionChange, RevisionMeta } from "../api";
 import { useToast } from "./Toast";
 import { Modal } from "./ui";
+import { formatDateTime } from "../formatTime";
 
-type Kind = "profile" | "shared-cfg";
+type Kind = "profile" | "shared-cfg" | "difficulty-preset";
+
+function kindLabel(kind: Kind): string {
+  if (kind === "shared-cfg") return "shared settings";
+  if (kind === "difficulty-preset") return "difficulty preset";
+  return "profile";
+}
 
 function formatWhen(raw: string): string {
   if (!raw) return "—";
   const d = new Date(raw.includes("T") ? raw : raw.replace(" ", "T") + "Z");
   if (Number.isNaN(d.getTime())) return raw;
-  return d.toLocaleString();
+  return formatDateTime(d);
 }
 
-function formatValue(path: string, v: unknown): string {
+function formatModList(ids: unknown[], nameByWorkshopId?: Map<string, string>): string {
+  if (!ids.length) return "—";
+  return ids
+    .map((raw) => {
+      const id = String(raw || "");
+      if (!id) return "—";
+      const name = nameByWorkshopId?.get(id);
+      return name && name !== id ? name : id;
+    })
+    .join(", ");
+}
+
+function formatValue(path: string, v: unknown, nameByWorkshopId?: Map<string, string>): string {
   if (/password/i.test(path)) {
     if (v == null || v === "") return "—";
     return "••••";
   }
   if (v == null || v === "") return "—";
+  if ((path === "mods" || path === "serverMods") && Array.isArray(v)) {
+    return formatModList(v, nameByWorkshopId);
+  }
   if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return String(v);
   try {
     const s = JSON.stringify(v);
@@ -61,6 +83,27 @@ export function RevisionHistoryModal({
   const [changes, setChanges] = useState<RevisionChange[] | null>(null);
   const [comparing, setComparing] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [modNames, setModNames] = useState<Map<string, string>>(() => new Map());
+
+  useEffect(() => {
+    if (kind !== "profile") {
+      setModNames(new Map());
+      return;
+    }
+    let cancelled = false;
+    api
+      .get<Mod[]>("/mods")
+      .then((rows) => {
+        if (cancelled) return;
+        setModNames(new Map((rows || []).map((m) => [m.workshopId, m.name || m.workshopId])));
+      })
+      .catch(() => {
+        if (!cancelled) setModNames(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [kind]);
 
   async function reload() {
     setLoading(true);
@@ -113,7 +156,7 @@ export function RevisionHistoryModal({
 
   async function restore() {
     if (selected == null || !canRestore) return;
-    if (!confirm(`Restore ${kind === "profile" ? "profile" : "shared settings"} to v${selected}? This creates a new version.`)) {
+    if (!confirm(`Restore ${kindLabel(kind)} to v${selected}? This creates a new version.`)) {
       return;
     }
     setRestoring(true);
@@ -133,7 +176,18 @@ export function RevisionHistoryModal({
   const newest = list[0]?.version;
 
   return (
-    <Modal title={title} onClose={onClose} wide>
+    <Modal
+      title={title}
+      onClose={onClose}
+      wide
+      footer={
+        <div className="modal-footer-actions">
+          <button className="btn" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      }
+    >
       <div className="revision-history">
         {loading && <div className="muted small">Loading…</div>}
         {error && <div className="error">{error}</div>}
@@ -219,8 +273,8 @@ export function RevisionHistoryModal({
                             {changes.map((c) => (
                               <tr key={c.path}>
                                 <td className="tag">{c.path}</td>
-                                <td className="revision-diff-before">{formatValue(c.path, c.before)}</td>
-                                <td className="revision-diff-after">{formatValue(c.path, c.after)}</td>
+                                <td className="revision-diff-before">{formatValue(c.path, c.before, modNames)}</td>
+                                <td className="revision-diff-after">{formatValue(c.path, c.after, modNames)}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -236,9 +290,6 @@ export function RevisionHistoryModal({
             </div>
           </div>
         )}
-        <div className="row" style={{ marginTop: 14 }}>
-          <button className="btn" onClick={onClose}>Close</button>
-        </div>
       </div>
     </Modal>
   );

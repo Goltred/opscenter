@@ -15,6 +15,7 @@ import {
   ensureWorkshopMeta,
   expandWorkshopDependencies,
   formatWorkshopRefList,
+  formatWorkshopShortList,
   isFresh,
   parseWorkshopId,
   PROFILE_RESOLVED_MAX_AGE_MS,
@@ -47,15 +48,19 @@ import {
 import { JOBS_HISTORY_LIMIT, jobDto, listActiveJobs, pruneInstanceJobs } from "../jobs.js";
 import {
   diffSnapshots,
+  getDifficultyPresetRevision,
   getProfileRevision,
   getOrCreateSharedSettings,
   getSharedCfgRevision,
+  listDifficultyPresetRevisions,
   listProfileRevisions,
   listSharedCfgRevisions,
   profileSnapshotFromBody,
+  recordDifficultyPresetRevision,
   recordProfileRevision,
   recordSharedCfgRevision,
   resolveInstanceSharedCfg,
+  restoreDifficultyPresetFromRevision,
   restoreProfileFromRevision,
   restoreSharedCfgFromRevision,
 } from "../revisions.js";
@@ -64,9 +69,28 @@ import {
   normalizeForcedDifficulty,
   renderArma3Profile,
 } from "../arma/difficulty.js";
-import { mergeServerCfg, pboToMissionTemplate, renderServerCfg } from "../arma/serverCfg.js";
+import { mergeServerCfg, normalizeMissionSource, normalizeMissionTemplateInput, pboToMissionTemplate, renderServerCfg } from "../arma/serverCfg.js";
 import { registerHcGroupRoutes } from "./hcGroupsApi.js";
 import { effectiveRemoteHcIps, groupsTargetingInstance, parseAdvertiseHost } from "../hcGroups.js";
+import {
+  registerApplyProfileImpl,
+  type ApplyProfileOpts,
+  type ApplyProfileStartResult,
+} from "../applyProfile.js";
+import {
+  registerInstanceControlImpl,
+  type InstanceControlOpts,
+  type InstanceControlResult,
+} from "../instanceControl.js";
+import { canConfirmSchedule, canFinishSchedule, canStandDownSchedule, confirmSchedule, finishScheduleOperation, standDownScheduleOccurrence, scheduleDto, activeOperationForInstance } from "../schedules/runner.js";
+import { discordPublicConfig, saveDiscordSettings } from "../discord/notify.js";
+import {
+  getDiscordBotRuntimeStatus,
+  listDiscordGuildChannels,
+  listDiscordGuildRoles,
+  listDiscordGuilds,
+  restartDiscordBot,
+} from "../discord/bot.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
 
@@ -463,6 +487,7 @@ function instanceDto(row: Record<string, unknown>) {
       hostId: g.host_id,
       desiredCount: clampHeadlessCount(g.desired_count),
     })),
+    activeOperation: activeOperationForInstance(String(row.id)),
   };
 }
 
@@ -523,17 +548,32 @@ apiRouter.delete("/instances/:id", requirePerm("host.remove"), (req: AuthedReque
   res.status(204).end();
 });
 
-async function dispatchInstanceOp(
-  req: AuthedRequest,
-  res: import("express").Response,
-  op: "instance.start" | "instance.stop" | "instance.restart" | "instance.status",
+function writeControlAudit(
+  actorId: string | null | undefined,
+  actorLabel: string | null | undefined,
+  source: string | null | undefined,
+  action: string,
+  targetId: string,
+  result: string,
 ) {
-  const row = getDb().prepare("SELECT * FROM instances WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
-  if (!row) return res.status(404).json({ error: "not found" });
+  getDb()
+    .prepare(
+      `INSERT INTO audit_log(actor_id, actor_email, action, target_id, result, ip)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(actorId || null, actorLabel || "", action, targetId, result, source || "");
+}
+
+async function runInstanceControlCore(opts: InstanceControlOpts): Promise<InstanceControlResult> {
+  const op = opts.op;
+  const row = getDb().prepare("SELECT * FROM instances WHERE id = ?").get(opts.instanceId) as
+    | Record<string, unknown>
+    | undefined;
+  if (!row) return { ok: false, status: 404, error: "not found" };
   const host = getDb().prepare("SELECT * FROM hosts WHERE id = ?").get(row.host_id) as Record<string, unknown> | undefined;
   const hub = getHub();
   const hostId = String(row.host_id);
-  if (!hub.isOnline(hostId)) return res.status(503).json({ error: "agent offline" });
+  if (!hub.isOnline(hostId)) return { ok: false, status: 503, error: "agent offline" };
 
   const payload: Record<string, unknown> = {
     instanceId: String(row.id),
@@ -547,11 +587,13 @@ async function dispatchInstanceOp(
       const info = await hub.dispatch(hostId, "host.info", {}, 30_000);
       if (info.data) hub.setBootstrap(hostId, info.data);
       if (info.ok && info.data?.armaServerPresent === false) {
-        return res.status(409).json({
+        return {
+          ok: false,
+          status: 409,
           error:
             `Arma 3 dedicated server is not installed at ${String(host.arma_root || "armaRoot")}. ` +
             "Use Prepare host (or Apply a Mission Profile) to download the creatordlc branch via SteamCMD.",
-        });
+        };
       }
     } catch {
       /* proceed — agent Start still fails clearly if the exe is missing */
@@ -576,9 +618,11 @@ async function dispatchInstanceOp(
         resolvedPaths = prepared.resolvedPaths;
         missionTemplate = prepared.missionTemplate;
       } catch (e) {
-        return res.status(502).json({
+        return {
+          ok: false,
+          status: 502,
           error: e instanceof Error ? e.message : "failed to prepare profile for launch",
-        });
+        };
       }
     }
     payload.args = buildInstanceLaunchArgs(host, row, profile, resolvedPaths, { client, server }, {
@@ -612,20 +656,48 @@ async function dispatchInstanceOp(
     const result = await hub.dispatch(hostId, op, payload, 120_000);
     const state = String(result.data?.state || (op === "instance.stop" ? "stopped" : result.ok ? "running" : row.state));
     getDb().prepare("UPDATE instances SET state = ? WHERE id = ?").run(state, row.id);
-    audit(req, op, String(row.id), result.ok ? "ok" : "failed");
-    if (!result.ok) return res.status(502).json({ error: result.error || result.message || "agent error" });
-    res.json({
-      status: "ok",
+    writeControlAudit(opts.actorId, opts.actorLabel, opts.source, op, String(row.id), result.ok ? "ok" : "failed");
+    if (!result.ok) {
+      return { ok: false, status: 502, error: result.error || result.message || "agent error", state };
+    }
+    return {
+      ok: true,
+      status: 200,
       state,
       result,
-      warning: payload.warning,
+      warning: payload.warning as string | undefined,
       launchSummary: payload.launchSummary,
-      args: payload.args,
-    });
+      args: payload.args as string[] | undefined,
+    };
   } catch (e) {
-    audit(req, op, String(row.id), "failed");
-    res.status(503).json({ error: e instanceof Error ? e.message : "dispatch failed" });
+    writeControlAudit(opts.actorId, opts.actorLabel, opts.source, op, String(row.id), "failed");
+    return { ok: false, status: 503, error: e instanceof Error ? e.message : "dispatch failed" };
   }
+}
+
+registerInstanceControlImpl(runInstanceControlCore);
+
+async function dispatchInstanceOp(
+  req: AuthedRequest,
+  res: import("express").Response,
+  op: "instance.start" | "instance.stop" | "instance.restart",
+) {
+  const out = await runInstanceControlCore({
+    instanceId: String(req.params.id),
+    op,
+    actorId: req.user?.id || null,
+    actorLabel: req.user?.email || "",
+    source: clientIp(req),
+  });
+  if (!out.ok) return res.status(out.status).json({ error: out.error || "failed" });
+  res.json({
+    status: "ok",
+    state: out.state,
+    result: out.result,
+    warning: out.warning,
+    launchSummary: out.launchSummary,
+    args: out.args,
+  });
 }
 
 apiRouter.post("/instances/:id/start", requirePerm("instance.control"), (req, res) =>
@@ -722,13 +794,15 @@ apiRouter.post("/instances/:id/headless/scale", requirePerm("instance.control"),
     String(live?.state || "").toLowerCase() === "starting" ||
     !!live?.pid;
 
-  try {
-    await rewriteInstanceServerCfgForHeadless(hostId, updated, host);
-  } catch (e) {
-    return res.status(502).json({ error: e instanceof Error ? e.message : "failed to update server.cfg" });
-  }
-
+  // While Arma is up, server.cfg is often locked and a disk rewrite would not affect the
+  // already-loaded allowlist. Skip rewrite and only start/stop HC processes.
+  // When the server is down, keep cfg in sync for the next start.
   if (!serverUp) {
+    try {
+      await rewriteInstanceServerCfgForHeadless(hostId, updated, host);
+    } catch (e) {
+      return res.status(502).json({ error: e instanceof Error ? e.message : "failed to update server.cfg" });
+    }
     audit(req, "instance.headless.scale", String(row.id), `saved:${target}`);
     return res.json({ status: "ok", headlessCount: target, started: false, instance: instanceDto(updated) });
   }
@@ -1003,6 +1077,172 @@ apiRouter.post("/instances/:id/sync-keys", requirePerm("mod.manage"), async (req
   }
 });
 
+const MAX_BIKEY_BYTES = 64 * 1024;
+
+function signatureKeyDto(row: Record<string, unknown>) {
+  return {
+    id: String(row.id),
+    filename: String(row.filename),
+    contentHash: String(row.content_hash || ""),
+    sizeBytes: Number(row.size_bytes) || 0,
+    createdAt: String(row.created_at || ""),
+  };
+}
+
+/** Panel library of .bikey files for manual push to host keys\ (advanced). */
+apiRouter.get("/signature-keys", requirePerm("mod.manage"), (_req, res) => {
+  const rows = getDb()
+    .prepare("SELECT * FROM signature_keys ORDER BY lower(filename), created_at DESC")
+    .all() as Record<string, unknown>[];
+  res.json(rows.map(signatureKeyDto));
+});
+
+apiRouter.post(
+  "/signature-keys",
+  requirePerm("mod.manage"),
+  upload.single("file"),
+  (req: AuthedRequest, res) => {
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: "file required" });
+    const originalName = String(file.originalname || "").trim();
+    if (!/\.bikey$/i.test(originalName)) {
+      return res.status(400).json({ error: "Only .bikey signature key files are allowed" });
+    }
+    if (/[\\/]/.test(originalName) || originalName.includes("..")) {
+      return res.status(400).json({ error: "invalid filename" });
+    }
+    if (file.size <= 0 || file.size > MAX_BIKEY_BYTES) {
+      return res.status(400).json({ error: `Key file must be 1–${MAX_BIKEY_BYTES} bytes` });
+    }
+    const filename = path.basename(originalName);
+    const existing = getDb()
+      .prepare("SELECT id FROM signature_keys WHERE lower(filename) = lower(?)")
+      .get(filename) as { id: string } | undefined;
+    const id = existing?.id || uuid();
+    const dir = path.join(config.repoRoot, "deploy", "keys");
+    fs.mkdirSync(dir, { recursive: true });
+    const dest = path.join(dir, `${id}-${filename}`);
+    if (existing) {
+      const prev = getDb().prepare("SELECT stored_path FROM signature_keys WHERE id = ?").get(id) as
+        | { stored_path: string }
+        | undefined;
+      if (prev?.stored_path && prev.stored_path !== dest && fs.existsSync(prev.stored_path)) {
+        try {
+          fs.unlinkSync(prev.stored_path);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    fs.writeFileSync(dest, file.buffer);
+    const hash = crypto.createHash("sha256").update(file.buffer).digest("hex");
+    if (existing) {
+      getDb()
+        .prepare(
+          `UPDATE signature_keys SET filename=?, stored_path=?, content_hash=?, size_bytes=?, uploaded_by=?, created_at=datetime('now') WHERE id=?`,
+        )
+        .run(filename, dest, hash, file.size, req.user?.id || null, id);
+    } else {
+      getDb()
+        .prepare(
+          `INSERT INTO signature_keys(id, filename, stored_path, content_hash, size_bytes, uploaded_by)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(id, filename, dest, hash, file.size, req.user?.id || null);
+    }
+    audit(req, "signature_key.upload", id, existing ? "replaced" : "ok");
+    const row = getDb().prepare("SELECT * FROM signature_keys WHERE id = ?").get(id) as Record<string, unknown>;
+    res.status(existing ? 200 : 201).json(signatureKeyDto(row));
+  },
+);
+
+apiRouter.delete("/signature-keys/:id", requirePerm("mod.manage"), (req: AuthedRequest, res) => {
+  const row = getDb().prepare("SELECT * FROM signature_keys WHERE id = ?").get(req.params.id) as
+    | Record<string, unknown>
+    | undefined;
+  if (!row) return res.status(404).json({ error: "not found" });
+  const stored = String(row.stored_path || "");
+  if (stored && fs.existsSync(stored)) {
+    try {
+      fs.unlinkSync(stored);
+    } catch {
+      /* ignore */
+    }
+  }
+  getDb().prepare("DELETE FROM signature_keys WHERE id = ?").run(req.params.id);
+  audit(req, "signature_key.delete", req.params.id);
+  res.status(204).end();
+});
+
+/** Push selected panel signature keys into this instance host's armaRoot\\keys. */
+apiRouter.post("/instances/:id/keys/deploy", requirePerm("mod.manage"), async (req: AuthedRequest, res) => {
+  const row = getDb().prepare("SELECT * FROM instances WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
+  if (!row) return res.status(404).json({ error: "not found" });
+  const hostId = String(row.host_id || "");
+  const hub = getHub();
+  if (!hub.isOnline(hostId)) return res.status(503).json({ error: "agent offline" });
+
+  const keyIds = Array.isArray(req.body?.keyIds)
+    ? (req.body.keyIds as unknown[]).map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
+  if (!keyIds.length) return res.status(400).json({ error: "keyIds required" });
+
+  const results: { id: string; filename: string; ok: boolean; skipped?: boolean; error?: string }[] = [];
+  for (const keyId of keyIds) {
+    const key = getDb().prepare("SELECT * FROM signature_keys WHERE id = ?").get(keyId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!key) {
+      results.push({ id: keyId, filename: "", ok: false, error: "not found" });
+      continue;
+    }
+    const filename = String(key.filename || "");
+    const stored = String(key.stored_path || "");
+    if (!stored || !fs.existsSync(stored)) {
+      results.push({ id: keyId, filename, ok: false, error: "file missing on panel" });
+      continue;
+    }
+    try {
+      const bytes = fs.readFileSync(stored);
+      const dep = await hub.dispatch(
+        hostId,
+        "file.deploy",
+        {
+          root: "keys",
+          relativePath: filename,
+          contentBase64: bytes.toString("base64"),
+          skipIfExists: false,
+        },
+        60_000,
+      );
+      if (!dep.ok) {
+        results.push({ id: keyId, filename, ok: false, error: dep.error || dep.message || "deploy failed" });
+      } else {
+        results.push({ id: keyId, filename, ok: true, skipped: !!dep.data?.skipped });
+      }
+    } catch (e) {
+      results.push({
+        id: keyId,
+        filename,
+        ok: false,
+        error: e instanceof Error ? e.message : "deploy failed",
+      });
+    }
+  }
+
+  const okCount = results.filter((r) => r.ok).length;
+  audit(req, "signature_key.deploy", String(row.id), `${okCount}/${results.length}`);
+  if (!okCount) {
+    return res.status(502).json({ error: "no keys deployed", results });
+  }
+  res.json({
+    status: "ok",
+    deployed: okCount,
+    failed: results.length - okCount,
+    results,
+  });
+});
+
 apiRouter.get("/instances/:id/logs", (req: AuthedRequest, res) => {
   const row = getDb().prepare("SELECT * FROM instances WHERE id = ?").get(req.params.id) as
     | Record<string, unknown>
@@ -1085,7 +1325,11 @@ apiRouter.get("/instances/:id/jobs", (req, res) => {
 function profileDto(row: Record<string, unknown>) {
   let missionName: string | undefined;
   let modlistName: string | undefined;
-  if (row.mission_id) {
+  let difficultyPresetName: string | undefined;
+  const missionSource = normalizeMissionSource(row.mission_source);
+  const missionTemplate =
+    missionSource === "mod" ? normalizeMissionTemplateInput(row.mission_template) : "";
+  if (missionSource === "library" && row.mission_id) {
     const m = getDb().prepare("SELECT name FROM missions WHERE id = ?").get(row.mission_id) as { name: string } | undefined;
     missionName = m?.name;
   }
@@ -1093,16 +1337,26 @@ function profileDto(row: Record<string, unknown>) {
     const ml = getDb().prepare("SELECT name FROM modlists WHERE id = ?").get(row.modlist_id) as { name: string } | undefined;
     modlistName = ml?.name;
   }
+  if (row.difficulty_preset_id) {
+    const dp = getDb()
+      .prepare("SELECT name FROM difficulty_presets WHERE id = ?")
+      .get(row.difficulty_preset_id) as { name: string } | undefined;
+    difficultyPresetName = dp?.name;
+  }
   return {
     id: row.id,
     name: row.name,
     version: row.version,
     mods: jsonParse<string[]>(String(row.mods), []),
     serverMods: jsonParse<string[]>(String(row.server_mods), []),
-    missionId: row.mission_id || undefined,
+    missionSource,
+    missionId: missionSource === "library" ? row.mission_id || undefined : undefined,
     missionName,
+    missionTemplate: missionTemplate || undefined,
     modlistId: row.modlist_id || undefined,
     modlistName,
+    difficultyPresetId: row.difficulty_preset_id || undefined,
+    difficultyPresetName,
     serverCfgOverrides: jsonParse(String(row.server_cfg_overrides), {}),
     basicCfgOverrides: jsonParse(String(row.basic_cfg_overrides), {}),
     extraArgs: jsonParse(String(row.extra_args), []),
@@ -1116,9 +1370,53 @@ function profileDto(row: Record<string, unknown>) {
   };
 }
 
+/** Resolve Arma mission template from a profile row (library PBO or mod-shipped template). */
+function resolveProfileMissionTemplate(profile: Record<string, unknown>): string {
+  const source = normalizeMissionSource(profile.mission_source);
+  if (source === "mod") {
+    return normalizeMissionTemplateInput(profile.mission_template);
+  }
+  if (profile.mission_id) {
+    const mission = getDb().prepare("SELECT pbo_filename, name FROM missions WHERE id = ?").get(profile.mission_id) as
+      | { pbo_filename: string; name: string }
+      | undefined;
+    return pboToMissionTemplate(mission?.pbo_filename || mission?.name || "");
+  }
+  return "";
+}
+
+function profileHasMission(profile: Record<string, unknown>): boolean {
+  const source = normalizeMissionSource(profile.mission_source);
+  if (source === "mod") return !!normalizeMissionTemplateInput(profile.mission_template);
+  return !!(profile.mission_id && String(profile.mission_id).trim());
+}
+
+function difficultyPresetDto(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    name: row.name,
+    version: row.version,
+    difficulty: normalizeCustomDifficulty(jsonParse(String(row.difficulty), {})),
+    createdAt: row.created_at ? String(row.created_at) : undefined,
+    updatedAt: row.updated_at ? String(row.updated_at) : undefined,
+  };
+}
+
 apiRouter.get("/profiles", (_req, res) => {
   const rows = getDb().prepare("SELECT * FROM mission_profiles ORDER BY name").all() as Record<string, unknown>[];
   res.json(rows.map(profileDto));
+});
+
+/** Profiles with no mission (library PBO or mod template). Must be before /profiles/:id. */
+apiRouter.get("/profiles/health", requirePerm("profile.view"), (_req, res) => {
+  const rows = getDb().prepare("SELECT id, name, mission_id, mission_source, mission_template FROM mission_profiles ORDER BY name").all() as Record<
+    string,
+    unknown
+  >[];
+  const missingMission = rows
+    .filter((r) => !profileHasMission(r))
+    .map((r) => ({ id: String(r.id), name: String(r.name || "") }));
+  res.json({ missingMission, count: missingMission.length });
 });
 
 apiRouter.get("/instances/:id/profiles", (_req, res) => {
@@ -1132,8 +1430,8 @@ apiRouter.post("/profiles", requirePerm("profile.edit"), (req: AuthedRequest, re
   const snapshot = profileSnapshotFromBody(req.body || {});
   getDb()
     .prepare(
-      `INSERT INTO mission_profiles(id, name, version, mods, server_mods, mission_id, modlist_id, server_cfg_overrides, basic_cfg_overrides, extra_args, custom_difficulty, dlcs, recommended_headless_count)
-       VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO mission_profiles(id, name, version, mods, server_mods, mission_id, mission_source, mission_template, modlist_id, difficulty_preset_id, server_cfg_overrides, basic_cfg_overrides, extra_args, custom_difficulty, dlcs, recommended_headless_count)
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -1141,7 +1439,10 @@ apiRouter.post("/profiles", requirePerm("profile.edit"), (req: AuthedRequest, re
       JSON.stringify(snapshot.mods),
       JSON.stringify(snapshot.serverMods),
       snapshot.missionId,
+      snapshot.missionSource,
+      snapshot.missionTemplate,
       snapshot.modlistId,
+      snapshot.difficultyPresetId,
       JSON.stringify(snapshot.serverCfgOverrides),
       JSON.stringify(snapshot.basicCfgOverrides),
       JSON.stringify(snapshot.extraArgs),
@@ -1160,8 +1461,8 @@ apiRouter.post("/instances/:id/profiles", requirePerm("profile.edit"), (req: Aut
   const snapshot = profileSnapshotFromBody(req.body || {});
   getDb()
     .prepare(
-      `INSERT INTO mission_profiles(id, name, version, mods, server_mods, mission_id, modlist_id, server_cfg_overrides, basic_cfg_overrides, extra_args, custom_difficulty, dlcs, recommended_headless_count)
-       VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO mission_profiles(id, name, version, mods, server_mods, mission_id, mission_source, mission_template, modlist_id, difficulty_preset_id, server_cfg_overrides, basic_cfg_overrides, extra_args, custom_difficulty, dlcs, recommended_headless_count)
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -1169,7 +1470,10 @@ apiRouter.post("/instances/:id/profiles", requirePerm("profile.edit"), (req: Aut
       JSON.stringify(snapshot.mods),
       JSON.stringify(snapshot.serverMods),
       snapshot.missionId,
+      snapshot.missionSource,
+      snapshot.missionTemplate,
       snapshot.modlistId,
+      snapshot.difficultyPresetId,
       JSON.stringify(snapshot.serverCfgOverrides),
       JSON.stringify(snapshot.basicCfgOverrides),
       JSON.stringify(snapshot.extraArgs),
@@ -1190,13 +1494,21 @@ apiRouter.get("/profiles/:id", (req, res) => {
 });
 
 apiRouter.put("/profiles/:id", requirePerm("profile.edit"), (req: AuthedRequest, res) => {
-  const existing = getDb().prepare("SELECT id FROM mission_profiles WHERE id = ?").get(req.params.id);
+  const existing = getDb().prepare("SELECT * FROM mission_profiles WHERE id = ?").get(req.params.id) as
+    | Record<string, unknown>
+    | undefined;
   if (!existing) return res.status(404).json({ error: "not found" });
   const b = req.body || {};
   const snapshot = profileSnapshotFromBody(b);
+  // Keep legacy inline custom_difficulty; UI no longer edits it (presets library owns Custom options).
+  snapshot.customDifficulty = normalizeCustomDifficulty(
+    jsonParse(String(existing.custom_difficulty || "{}"), {}),
+  );
   getDb()
     .prepare(
-      `UPDATE mission_profiles SET name=?, version=version+1, mods=?, server_mods=?, mission_id=?, modlist_id=?,
+      `UPDATE mission_profiles SET name=?, version=version+1, mods=?, server_mods=?, mission_id=?,
+       mission_source=?, mission_template=?, modlist_id=?,
+       difficulty_preset_id=?,
        server_cfg_overrides=?, basic_cfg_overrides=?, extra_args=?, custom_difficulty=?, dlcs=?,
        recommended_headless_count=?,
        resolved_client_mods='[]', resolved_server_mods='[]', resolved_mods_at=NULL, resolved_mods_hash='',
@@ -1207,7 +1519,10 @@ apiRouter.put("/profiles/:id", requirePerm("profile.edit"), (req: AuthedRequest,
       JSON.stringify(snapshot.mods),
       JSON.stringify(snapshot.serverMods),
       snapshot.missionId,
+      snapshot.missionSource,
+      snapshot.missionTemplate,
       snapshot.modlistId,
+      snapshot.difficultyPresetId,
       JSON.stringify(snapshot.serverCfgOverrides),
       JSON.stringify(snapshot.basicCfgOverrides),
       JSON.stringify(snapshot.extraArgs),
@@ -1381,6 +1696,114 @@ apiRouter.delete("/profiles/:id", requirePerm("profile.delete"), (req, res) => {
   res.status(204).end();
 });
 
+// ---- difficulty presets ----
+apiRouter.get("/difficulty-presets", requirePerm("profile.view"), (_req, res) => {
+  const rows = getDb().prepare("SELECT * FROM difficulty_presets ORDER BY name").all() as Record<string, unknown>[];
+  res.json(rows.map(difficultyPresetDto));
+});
+
+apiRouter.get("/difficulty-presets/:id", requirePerm("profile.view"), (req, res) => {
+  const row = getDb().prepare("SELECT * FROM difficulty_presets WHERE id = ?").get(req.params.id) as
+    | Record<string, unknown>
+    | undefined;
+  if (!row) return res.status(404).json({ error: "not found" });
+  res.json(difficultyPresetDto(row));
+});
+
+apiRouter.post("/difficulty-presets", requirePerm("profile.edit"), (req: AuthedRequest, res) => {
+  const id = uuid();
+  const name = String(req.body?.name || "").trim() || "Custom";
+  const difficulty = normalizeCustomDifficulty(req.body?.difficulty);
+  getDb()
+    .prepare(
+      `INSERT INTO difficulty_presets(id, name, version, difficulty, created_at, updated_at)
+       VALUES (?, ?, 1, ?, datetime('now'), datetime('now'))`,
+    )
+    .run(id, name, JSON.stringify(difficulty));
+  recordDifficultyPresetRevision(
+    id,
+    1,
+    { name, difficulty },
+    { id: req.user?.id, email: req.user?.email },
+  );
+  audit(req, "difficulty_preset.create", id);
+  res.status(201).json({ id });
+});
+
+apiRouter.put("/difficulty-presets/:id", requirePerm("profile.edit"), (req: AuthedRequest, res) => {
+  const existing = getDb().prepare("SELECT id FROM difficulty_presets WHERE id = ?").get(req.params.id);
+  if (!existing) return res.status(404).json({ error: "not found" });
+  const name = String(req.body?.name || "").trim() || "Custom";
+  const difficulty = normalizeCustomDifficulty(req.body?.difficulty);
+  getDb()
+    .prepare(
+      `UPDATE difficulty_presets SET name=?, difficulty=?, version=version+1, updated_at=datetime('now') WHERE id=?`,
+    )
+    .run(name, JSON.stringify(difficulty), req.params.id);
+  const updated = getDb().prepare("SELECT version FROM difficulty_presets WHERE id = ?").get(req.params.id) as {
+    version: number;
+  };
+  recordDifficultyPresetRevision(
+    String(req.params.id),
+    Number(updated.version),
+    { name, difficulty },
+    { id: req.user?.id, email: req.user?.email },
+  );
+  audit(req, "difficulty_preset.update", String(req.params.id));
+  res.json({ status: "ok", version: Number(updated.version) });
+});
+
+apiRouter.delete("/difficulty-presets/:id", requirePerm("profile.edit"), (req: AuthedRequest, res) => {
+  getDb().prepare("DELETE FROM difficulty_presets WHERE id = ?").run(req.params.id);
+  audit(req, "difficulty_preset.delete", String(req.params.id));
+  res.status(204).end();
+});
+
+apiRouter.get("/difficulty-presets/:id/revisions", requirePerm("profile.view"), (req, res) => {
+  const row = getDb().prepare("SELECT id FROM difficulty_presets WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "not found" });
+  res.json(listDifficultyPresetRevisions(String(req.params.id)));
+});
+
+apiRouter.get("/difficulty-presets/:id/revisions/compare", requirePerm("profile.view"), (req, res) => {
+  const a = Number(req.query.a);
+  const b = Number(req.query.b);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) {
+    return res.status(400).json({ error: "a and b version query params required" });
+  }
+  const left = getDifficultyPresetRevision(String(req.params.id), a);
+  const right = getDifficultyPresetRevision(String(req.params.id), b);
+  if (!left || !right) return res.status(404).json({ error: "revision not found" });
+  res.json({
+    a: left,
+    b: right,
+    changes: diffSnapshots(
+      left.snapshot as unknown as Record<string, unknown>,
+      right.snapshot as unknown as Record<string, unknown>,
+    ),
+  });
+});
+
+apiRouter.get("/difficulty-presets/:id/revisions/:version", requirePerm("profile.view"), (req, res) => {
+  const version = Number(req.params.version);
+  if (!Number.isFinite(version)) return res.status(400).json({ error: "invalid version" });
+  const rev = getDifficultyPresetRevision(String(req.params.id), version);
+  if (!rev) return res.status(404).json({ error: "not found" });
+  res.json(rev);
+});
+
+apiRouter.post("/difficulty-presets/:id/restore", requirePerm("profile.edit"), (req: AuthedRequest, res) => {
+  const version = Number(req.body?.version);
+  if (!Number.isFinite(version)) return res.status(400).json({ error: "version required" });
+  const result = restoreDifficultyPresetFromRevision(String(req.params.id), version, {
+    id: req.user?.id,
+    email: req.user?.email,
+  });
+  if ("error" in result) return res.status(404).json({ error: result.error });
+  audit(req, "difficulty_preset.restore", String(req.params.id));
+  res.json({ status: "ok", version: result.newVersion });
+});
+
 /** Find a mission PBO on the panel disk (stored_path, deploy/missions, or quarantine). */
 function resolveMissionLocalPath(mission: Record<string, unknown>): string | null {
   const stored = String(mission.stored_path || "");
@@ -1459,7 +1882,7 @@ async function ensureMissionOnHost(
 
   const localPath = resolveMissionLocalPath(mission);
   if (!localPath) {
-    const msg = `${pboFilename} missing on host and not accessible on the panel — re-upload/deploy the mission first`;
+    const msg = `${pboFilename} missing on host and not accessible on the panel — re-upload and approve the mission first`;
     pushProgress("mission", msg);
     if (required) throw new Error(msg);
     return;
@@ -1671,13 +2094,7 @@ async function writeProfileConfigToHost(
     mergedCfg.hostname = String(profile.name || "A3Panel Server");
   }
   const forcedDifficulty = normalizeForcedDifficulty(mergedCfg.forcedDifficulty);
-  let missionTemplate = "";
-  if (profile.mission_id) {
-    const mission = getDb().prepare("SELECT pbo_filename, name FROM missions WHERE id = ?").get(profile.mission_id) as
-      | { pbo_filename: string; name: string }
-      | undefined;
-    missionTemplate = pboToMissionTemplate(mission?.pbo_filename || mission?.name || "");
-  }
+  const missionTemplate = resolveProfileMissionTemplate(profile);
   const serverCfg = renderServerCfg(mergedCfg, {
     missionTemplate: missionTemplate || undefined,
     missionDifficulty: forcedDifficulty || undefined,
@@ -1685,11 +2102,31 @@ async function writeProfileConfigToHost(
   });
   const files: { relativePath: string; content: string }[] = [{ relativePath: "server.cfg", content: serverCfg }];
   if (forcedDifficulty === "Custom") {
-    const custom = normalizeCustomDifficulty(jsonParse(String(profile.custom_difficulty), {}));
-    files.push({
-      relativePath: "Users/server/server.Arma3Profile",
-      content: renderArma3Profile(custom),
-    });
+    let custom: ReturnType<typeof normalizeCustomDifficulty> | null = null;
+    const presetId = profile.difficulty_preset_id ? String(profile.difficulty_preset_id) : "";
+    if (presetId) {
+      const preset = getDb()
+        .prepare("SELECT difficulty FROM difficulty_presets WHERE id = ?")
+        .get(presetId) as { difficulty: string } | undefined;
+      if (preset) custom = normalizeCustomDifficulty(jsonParse(String(preset.difficulty), {}));
+    }
+    if (!custom) {
+      const raw = profile.custom_difficulty;
+      if (raw != null && String(raw).trim() !== "") {
+        custom = normalizeCustomDifficulty(jsonParse(String(raw), {}));
+      }
+    }
+    if (custom) {
+      files.push({
+        relativePath: "Users/server/server.Arma3Profile",
+        content: renderArma3Profile(custom),
+      });
+    } else {
+      pushProgress?.(
+        "warn",
+        "Custom difficulty is set but no preset or saved options were found; skipping Arma3Profile",
+      );
+    }
   }
   const cfgResult = await hub.dispatch(
     hostId,
@@ -1703,10 +2140,16 @@ async function writeProfileConfigToHost(
   );
   if (!cfgResult.ok) throw new Error(cfgResult.error || "config.apply failed");
 
-  if (profile.mission_id) {
+  // Library missions are copied to host mpmissions; mod-shipped templates are not.
+  if (normalizeMissionSource(profile.mission_source) === "library" && profile.mission_id) {
     await ensureMissionOnHost(hostId, profile.mission_id as string, pushProgress || (() => {}), {
       required: true,
     });
+  } else if (normalizeMissionSource(profile.mission_source) === "mod" && missionTemplate) {
+    pushProgress?.(
+      "config",
+      `Using mod mission template “${missionTemplate}” (no PBO deploy)`,
+    );
   }
 
   return { missionTemplate, serverCfg, mergedCfg };
@@ -1808,13 +2251,7 @@ async function prepareProfileLaunch(
     }
   }
 
-  let missionTemplate = "";
-  if (profile.mission_id) {
-    const mission = getDb().prepare("SELECT pbo_filename, name FROM missions WHERE id = ?").get(profile.mission_id) as
-      | { pbo_filename: string; name: string }
-      | undefined;
-    missionTemplate = pboToMissionTemplate(mission?.pbo_filename || mission?.name || "");
-  }
+  const missionTemplate = resolveProfileMissionTemplate(profile);
   return { client, server, resolvedPaths, missionTemplate };
 }
 
@@ -1859,9 +2296,11 @@ function buildInstanceLaunchArgs(
   const extra = jsonParse<string[]>(String(profile.extra_args), []);
   const extraNorm = extra.map((a) => String(a || "").trim()).filter(Boolean);
   const hasAutoInit = extraNorm.some((a) => a.toLowerCase() === "-autoinit");
-  // BI: -autoInit is ignored unless server.cfg has persistent=1. We default persistent on
-  // when a mission template is present (see renderServerCfg).
-  if (missionTemplate && !hasAutoInit) {
+  // Library PBOs: auto-start for dedicated. Mod-shipped missions (e.g. Antistasi) often
+  // wait for admin start/load — forcing -autoInit with persistent=1 causes a restart loop
+  // if the mission ends or fails to init. Operators can still add -autoInit in extra args.
+  const missionSource = normalizeMissionSource(profile.mission_source);
+  if (missionTemplate && !hasAutoInit && missionSource === "library") {
     args.push("-autoInit");
   }
   for (const s of extraNorm) {
@@ -1948,23 +2387,59 @@ async function steamcmdAwait(
 }
 
 apiRouter.post("/profiles/:id/apply", requirePerm("profile.apply"), async (req: AuthedRequest, res) => {
-  const profile = getDb().prepare("SELECT * FROM mission_profiles WHERE id = ?").get(req.params.id) as
+  try {
+    const result = await runApplyProfileJob({
+      profileId: String(req.params.id),
+      instanceId: String(req.body?.instanceId || "").trim(),
+      downloadMods: req.body?.downloadMods !== false,
+      updateServer: !!req.body?.updateServer,
+      validate: !!req.body?.validate,
+      matchHeadlessRecommendation: !!req.body?.matchHeadlessRecommendation,
+      forceStart: !!req.body?.forceStart,
+      steamAccountId: req.body?.steamAccountId,
+      requestedBy: req.user?.id || null,
+      actorLabel: req.user?.email || req.user?.id || "panel user",
+      triggerKind: "user",
+      refreshDeps: !!req.body?.refreshDeps,
+      auditActorEmail: req.user?.email || "",
+    });
+    if (result.status === "failed") {
+      return res.status(result.error === "agent offline" ? 503 : 400).json({ error: result.error, jobId: result.jobId });
+    }
+    res.json(result);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "apply failed";
+    if (/not found/i.test(msg)) return res.status(404).json({ error: msg });
+    if (/required|Steam account/i.test(msg)) return res.status(400).json({ error: msg });
+    res.status(500).json({ error: msg });
+  }
+});
+
+type ApplyJobInternalOpts = ApplyProfileOpts & {
+  refreshDeps?: boolean;
+  auditActorEmail?: string;
+};
+
+async function runApplyProfileJob(opts: ApplyJobInternalOpts): Promise<ApplyProfileStartResult> {
+  const profileId = String(opts.profileId || "").trim();
+  const profile = getDb().prepare("SELECT * FROM mission_profiles WHERE id = ?").get(profileId) as
     | Record<string, unknown>
     | undefined;
-  if (!profile) return res.status(404).json({ error: "not found" });
-  const targetInstanceId = String(req.body?.instanceId || "").trim();
-  if (!targetInstanceId) return res.status(400).json({ error: "instanceId required" });
+  if (!profile) throw new Error("profile not found");
+  const targetInstanceId = String(opts.instanceId || "").trim();
+  if (!targetInstanceId) throw new Error("instanceId required");
   const inst = getDb().prepare("SELECT * FROM instances WHERE id = ?").get(targetInstanceId) as
     | Record<string, unknown>
     | undefined;
-  if (!inst) return res.status(404).json({ error: "instance not found" });
+  if (!inst) throw new Error("instance not found");
   const hostRow = getDb().prepare("SELECT * FROM hosts WHERE id = ?").get(inst.host_id) as Record<string, unknown> | undefined;
-  if (!hostRow) return res.status(404).json({ error: "host not found" });
+  if (!hostRow) throw new Error("host not found");
 
-  const downloadMods = req.body?.downloadMods !== false;
-  const updateServer = !!req.body?.updateServer;
-  const validate = !!req.body?.validate;
-  const matchHeadlessRecommendation = !!req.body?.matchHeadlessRecommendation;
+  const downloadMods = opts.downloadMods !== false;
+  const updateServer = !!opts.updateServer;
+  const validate = !!opts.validate;
+  const matchHeadlessRecommendation = !!opts.matchHeadlessRecommendation;
+  const forceStart = !!opts.forceStart;
   const profileDlcs = normalizeDlcCodes(jsonParse(String(profile.dlcs), []));
   const armaRoot = String(hostRow.arma_root || "");
   const modsLibraryPath = String(hostRow.mods_library_path || "").trim();
@@ -1975,11 +2450,7 @@ apiRouter.post("/profiles/:id/apply", requirePerm("profile.apply"), async (req: 
   const maySteamMods = downloadMods;
   let steamPayload: ReturnType<typeof steamCredsPayload> | null = null;
   if (maySteamMods || updateServer) {
-    try {
-      steamPayload = steamCredsPayload(resolveSteamAccount(req.body?.steamAccountId));
-    } catch (e) {
-      return res.status(400).json({ error: e instanceof Error ? e.message : "Steam account required" });
-    }
+    steamPayload = steamCredsPayload(resolveSteamAccount(opts.steamAccountId));
   }
 
   if (matchHeadlessRecommendation) {
@@ -1998,35 +2469,55 @@ apiRouter.post("/profiles/:id/apply", requirePerm("profile.apply"), async (req: 
     getDb()
       .prepare(`UPDATE jobs SET stage=?, progress=?, state=?, updated_at=datetime('now') WHERE id=?`)
       .run(stage, JSON.stringify(progress), stage === "failed" ? "failed" : "running", jobId);
+    try {
+      opts.onProgress?.(stage, message);
+    } catch {
+      /* ignore progress hook errors */
+    }
   };
 
+  const triggerKind = opts.triggerKind || (opts.scheduleId ? "schedule" : opts.requestedBy ? "user" : "");
+  const actorLabel =
+    String(opts.actorLabel || "").trim() ||
+    (triggerKind === "schedule" ? "Scheduler" : "") ||
+    String(opts.auditActorEmail || opts.requestedBy || "").trim();
   getDb()
     .prepare(
-      `INSERT INTO jobs(id, kind, host_id, instance_id, profile_id, state, stage, progress, requested_by)
-       VALUES (?, 'apply_profile', ?, ?, ?, 'running', 'start', ?, ?)`,
+      `INSERT INTO jobs(id, kind, host_id, instance_id, profile_id, state, stage, progress, requested_by, actor_label, trigger_kind, schedule_id)
+       VALUES (?, 'apply_profile', ?, ?, ?, 'running', 'start', ?, ?, ?, ?, ?)`,
     )
-    .run(jobId, hostId, String(inst.id), req.params.id, JSON.stringify(progress), req.user?.id || null);
+    .run(
+      jobId,
+      hostId,
+      String(inst.id),
+      profileId,
+      JSON.stringify(progress),
+      opts.requestedBy || null,
+      actorLabel,
+      triggerKind,
+      opts.scheduleId || null,
+    );
   pruneInstanceJobs(String(inst.id));
+
+  const baseResult: ApplyProfileStartResult = {
+    jobId,
+    status: "started",
+    instanceId: String(inst.id),
+    hostId,
+    profileId,
+    profileName: String(profile.name || ""),
+    downloadedMods: downloadMods,
+    updatedServer: updateServer,
+    modsLibraryPath: libraryPath || undefined,
+  };
 
   if (!hub.isOnline(hostId)) {
     pushProgress("failed", "agent offline");
     getDb().prepare("UPDATE jobs SET error=? WHERE id=?").run("agent offline", jobId);
-    return res.status(503).json({ error: "agent offline", jobId });
+    return { ...baseResult, status: "failed", error: "agent offline" };
   }
 
   // Return immediately; SteamCMD can take a long time. Client polls job / SteamCMD logs.
-  res.json({
-    jobId,
-    status: "started",
-    instanceId: inst.id,
-    hostId,
-    profileId: req.params.id,
-    profileName: profile.name,
-    downloadedMods: downloadMods,
-    updatedServer: updateServer,
-    modsLibraryPath: libraryPath || undefined,
-  });
-
   void (async () => {
     try {
       const live = hub.getInstanceStatus(hostId, String(inst.id));
@@ -2155,17 +2646,7 @@ apiRouter.post("/profiles/:id/apply", requirePerm("profile.apply"), async (req: 
         needFreshInstall || (profileDlcs.length > 0 && (needCreatorBranchUpdate || updateServer));
       if (runServerUpdate) {
         if (!steamPayload) {
-          try {
-            steamPayload = steamCredsPayload(resolveSteamAccount(req.body?.steamAccountId));
-          } catch (e) {
-            throw new Error(
-              e instanceof Error
-                ? e.message
-                : needFreshInstall
-                  ? "Steam account required to download the Arma dedicated server (creatordlc)"
-                  : "Steam account required to install/update the Creator DLC server branch",
-            );
-          }
+          steamPayload = steamCredsPayload(resolveSteamAccount(opts.steamAccountId));
         }
         await steamcmdAwait(
           hostId,
@@ -2189,7 +2670,7 @@ apiRouter.post("/profiles/:id/apply", requirePerm("profile.apply"), async (req: 
       }
 
       const expanded = await resolveProfileWorkshopIds(profile, {
-        force: !!req.body?.refreshDeps,
+        force: !!opts.refreshDeps,
         preferStale: false,
       });
       const workshopIds = [...expanded.client, ...expanded.server];
@@ -2337,23 +2818,26 @@ apiRouter.post("/profiles/:id/apply", requirePerm("profile.apply"), async (req: 
               (missing.length ? `; ${missing.length} mod folder(s) not found` : ""),
         );
         if (noKeys.length) {
+          const labeled = await formatWorkshopShortList(noKeys);
           pushProgress(
             "keys",
-            `No .bikey in: ${noKeys.slice(0, 12).join(", ")}${noKeys.length > 12 ? "…" : ""} (unsigned / server-only).`,
+            `No .bikey in: ${labeled || noKeys.slice(0, 12).join(", ")}${!labeled && noKeys.length > 12 ? "…" : ""} (unsigned / server-only).`,
           );
         }
         if (missing.length) {
+          const labeled = await formatWorkshopShortList(missing);
           pushProgress(
             "keys",
-            `Could not resolve folder for: ${missing.slice(0, 12).join(", ")}${missing.length > 12 ? "…" : ""}`,
+            `Could not resolve folder for: ${labeled || missing.slice(0, 12).join(", ")}${!labeled && missing.length > 12 ? "…" : ""}`,
           );
         }
       }
 
-      getDb().prepare("UPDATE instances SET current_profile_id = ? WHERE id = ?").run(req.params.id, inst.id);
+      getDb().prepare("UPDATE instances SET current_profile_id = ? WHERE id = ?").run(profileId, inst.id);
 
-      if (wasRunning) {
-        pushProgress("instance", "Starting instance with the applied profile…");
+      const shouldStart = wasRunning || forceStart;
+      if (shouldStart) {
+        pushProgress("instance", forceStart && !wasRunning ? "Starting instance with the applied profile…" : "Starting instance with the applied profile…");
         const freshInst =
           (getDb().prepare("SELECT * FROM instances WHERE id = ?").get(inst.id) as Record<string, unknown>) || inst;
         const resolvedPaths = await resolveModLaunchPaths(hostId, hostRow, [
@@ -2395,7 +2879,7 @@ apiRouter.post("/profiles/:id/apply", requirePerm("profile.apply"), async (req: 
         if (!start.ok) {
           getDb().prepare("UPDATE instances SET state = 'stopped' WHERE id = ?").run(inst.id);
           throw new Error(
-            `Profile applied, but restart failed: ${start.error || start.message || "instance.start failed"}`,
+            `Profile applied, but start failed: ${start.error || start.message || "instance.start failed"}`,
           );
         }
         const state = String(start.data?.state || "running");
@@ -2403,22 +2887,34 @@ apiRouter.post("/profiles/:id/apply", requirePerm("profile.apply"), async (req: 
         pushProgress(
           "instance",
           headless.length
-            ? `Instance restarted with applied profile (${headless.length} headless client(s))`
-            : "Instance restarted with applied profile",
+            ? `Instance started with applied profile (${headless.length} headless client(s))`
+            : "Instance started with applied profile",
         );
       }
 
-      pushProgress("done", wasRunning ? "Profile applied and instance restarted" : "Profile applied");
+      pushProgress("done", shouldStart ? "Profile applied and instance started" : "Profile applied");
       getDb().prepare("UPDATE jobs SET state='done', stage='done', error='', updated_at=datetime('now') WHERE id=?").run(jobId);
-      audit(req, "profile.apply", String(req.params.id), "ok");
+      getDb()
+        .prepare(
+          `INSERT INTO audit_log(actor_email, action, target_type, target_id, result) VALUES (?, 'profile.apply', 'profile', ?, 'ok')`,
+        )
+        .run(opts.auditActorEmail || opts.actorLabel || opts.requestedBy || "system", profileId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "apply failed";
       pushProgress("failed", msg);
       getDb().prepare("UPDATE jobs SET state='failed', error=?, updated_at=datetime('now') WHERE id=?").run(msg, jobId);
-      audit(req, "profile.apply", String(req.params.id), "failed");
+      getDb()
+        .prepare(
+          `INSERT INTO audit_log(actor_email, action, target_type, target_id, result) VALUES (?, 'profile.apply', 'profile', ?, 'failed')`,
+        )
+        .run(opts.auditActorEmail || opts.actorLabel || opts.requestedBy || "system", profileId);
     }
   })();
-});
+
+  return baseResult;
+}
+
+registerApplyProfileImpl((opts) => runApplyProfileJob(opts));
 
 apiRouter.get("/jobs/active", (_req, res) => {
   res.json(listActiveJobs());
@@ -2447,6 +2943,14 @@ apiRouter.post("/config/preview", (req, res) => {
 });
 
 // ---- modlists ----
+function isReadableModName(name: unknown, workshopId: string): boolean {
+  const s = String(name || "").trim();
+  if (!s || s === workshopId) return false;
+  if (/^https?:\/\//i.test(s)) return false;
+  if (/steamcommunity\.com/i.test(s)) return false;
+  return true;
+}
+
 function modlistDto(row: Record<string, unknown>) {
   const entries = jsonParse(String(row.entries), [] as { workshopId: string; name?: string; kind: string }[]);
   const meta = readCachedWorkshopMeta(entries.map((e) => e.workshopId));
@@ -2456,9 +2960,11 @@ function modlistDto(row: Record<string, unknown>) {
     sourceFilename: row.source_filename || "",
     entries: entries.map((e) => {
       const m = meta.get(e.workshopId);
+      const stored = isReadableModName(e.name, e.workshopId) ? String(e.name).trim() : "";
+      const title = isReadableModName(m?.title, e.workshopId) ? String(m?.title).trim() : "";
       return {
         workshopId: e.workshopId,
-        name: e.name || m?.title || e.workshopId,
+        name: stored || title || e.workshopId,
         kind: e.kind || "client",
         previewUrl: m?.previewUrl || undefined,
         workshopUrl: workshopUrl(e.workshopId),
@@ -2785,6 +3291,55 @@ apiRouter.get("/hosts/:id/arma-install", requirePerm("mod.manage"), async (req: 
   }
 });
 
+/** Panel library workshop IDs vs what is present on this host (agent mod.check). */
+apiRouter.post("/hosts/:id/mods/check", requirePerm("mod.manage"), async (req: AuthedRequest, res) => {
+  const hostId = req.params.id;
+  const hub = getHub();
+  if (!hub.isOnline(hostId)) return res.status(503).json({ error: "agent offline" });
+  const host = getDb().prepare("SELECT * FROM hosts WHERE id = ?").get(hostId) as Record<string, unknown> | undefined;
+  if (!host) return res.status(404).json({ error: "host not found" });
+
+  let workshopIds: string[] = Array.isArray(req.body?.workshopIds)
+    ? (req.body.workshopIds as unknown[]).map((x) => String(x || "").trim()).filter((id) => /^\d+$/.test(id))
+    : [];
+  if (!workshopIds.length) {
+    workshopIds = (
+      getDb().prepare("SELECT workshop_id FROM mods ORDER BY name").all() as { workshop_id: string }[]
+    ).map((r) => String(r.workshop_id));
+  }
+  if (!workshopIds.length) {
+    return res.json({ present: [], missing: [], sources: {}, paths: {}, message: "Library is empty" });
+  }
+
+  const configured = String(host.mods_library_path || "").trim();
+  const payload: Record<string, unknown> = { workshopIds, ensureLocalLinks: false };
+  if (configured) {
+    payload.libraryPath = resolveModsLibraryPath(String(host.arma_root || ""), configured);
+  }
+
+  try {
+    const result = await hub.dispatch(hostId, "mod.check", payload, 60_000);
+    if (!result.ok) {
+      return res.status(502).json({ error: result.error || result.message || "mod check failed" });
+    }
+    const data = (result.data || {}) as Record<string, unknown>;
+    const present = Array.isArray(data.present) ? data.present.map(String) : [];
+    const missing = Array.isArray(data.missing) ? data.missing.map(String) : [];
+    const sources =
+      data.sources && typeof data.sources === "object" ? (data.sources as Record<string, string>) : {};
+    const paths = data.paths && typeof data.paths === "object" ? (data.paths as Record<string, string>) : {};
+    res.json({
+      present,
+      missing,
+      sources,
+      paths,
+      message: result.message || "",
+    });
+  } catch (e) {
+    res.status(503).json({ error: e instanceof Error ? e.message : "mods check failed" });
+  }
+});
+
 apiRouter.post("/steamcmd/download", requirePerm("mod.manage"), async (req: AuthedRequest, res) => {
   const hostId = String(req.body?.hostId || "");
   const workshopId = String(req.body?.workshopId || "");
@@ -2928,27 +3483,90 @@ apiRouter.get("/uploads", (_req, res) => {
 });
 
 apiRouter.post("/uploads", requirePerm("mission.upload"), upload.single("file"), (req: AuthedRequest, res) => {
-  const section = String(req.query.section || "mission");
+  const section = String(req.query.section || "mission").toLowerCase();
+  if (section !== "mission") {
+    return res.status(400).json({
+      error: "Only mission .pbo uploads are supported — keys and configs are not managed here",
+    });
+  }
   const file = req.file;
   if (!file) return res.status(400).json({ error: "file required" });
+  const originalName = String(file.originalname || "").trim();
+  if (!/\.pbo$/i.test(originalName)) {
+    return res.status(400).json({ error: "Only .pbo mission files are allowed" });
+  }
+  // Reject path tricks in the stored filename
+  if (/[\\/]/.test(originalName) || originalName.includes("..")) {
+    return res.status(400).json({ error: "invalid filename" });
+  }
   const id = uuid();
   const dir = path.join(config.repoRoot, "deploy", "quarantine");
   fs.mkdirSync(dir, { recursive: true });
-  const stored = path.join(dir, `${id}-${file.originalname}`);
+  const stored = path.join(dir, `${id}-${path.basename(originalName)}`);
   fs.writeFileSync(stored, file.buffer);
   const hash = crypto.createHash("sha256").update(file.buffer).digest("hex");
   getDb()
     .prepare(
       `INSERT INTO uploads(id, uploader_id, section, original_name, stored_path, content_hash, size_bytes, detected_type, validation_state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'quarantined')`,
+       VALUES (?, ?, 'mission', ?, ?, ?, ?, ?, 'quarantined')`,
     )
-    .run(id, req.user?.id || null, section, file.originalname, stored, hash, file.size, path.extname(file.originalname));
+    .run(id, req.user?.id || null, path.basename(originalName), stored, hash, file.size, ".pbo");
   res.status(201).json({ id });
 });
 
-apiRouter.post("/uploads/:id/approve", requirePerm("mission.manage"), (req, res) => {
-  getDb().prepare("UPDATE uploads SET validation_state = 'approved', reject_reason = '' WHERE id = ?").run(req.params.id);
-  res.json({ status: "ok" });
+/** Copy an approved/quarantined mission upload into the panel mission library. */
+function promoteMissionUploadToLibrary(u: Record<string, unknown>): { missionId: string; updated: boolean } {
+  const storedPath = String(u.stored_path || "");
+  if (!storedPath || !fs.existsSync(storedPath)) {
+    throw new Error("quarantine file missing on panel");
+  }
+  const pboName = String(u.original_name || "mission.pbo");
+  const missionsDir = path.join(config.repoRoot, "deploy", "missions");
+  fs.mkdirSync(missionsDir, { recursive: true });
+  const existing = getDb()
+    .prepare("SELECT id, stored_path FROM missions WHERE lower(pbo_filename) = lower(?)")
+    .get(pboName) as { id: string; stored_path: string } | undefined;
+  const missionId = existing?.id || uuid();
+  const dest = path.join(missionsDir, `${missionId}-${pboName}`);
+  fs.copyFileSync(storedPath, dest);
+  if (existing?.stored_path && existing.stored_path !== dest && fs.existsSync(existing.stored_path)) {
+    try {
+      fs.unlinkSync(existing.stored_path);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (existing) {
+    getDb()
+      .prepare(`UPDATE missions SET name=?, pbo_filename=?, content_hash=?, stored_path=? WHERE id=?`)
+      .run(pboName, pboName, u.content_hash, dest, missionId);
+  } else {
+    getDb()
+      .prepare("INSERT INTO missions(id, name, pbo_filename, content_hash, stored_path) VALUES (?, ?, ?, ?, ?)")
+      .run(missionId, pboName, pboName, u.content_hash, dest);
+  }
+  return { missionId, updated: !!existing };
+}
+
+apiRouter.post("/uploads/:id/approve", requirePerm("mission.manage"), (req: AuthedRequest, res) => {
+  const u = getDb().prepare("SELECT * FROM uploads WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
+  if (!u) return res.status(404).json({ error: "not found" });
+  if (u.validation_state !== "quarantined") {
+    return res.status(400).json({ error: "upload is not waiting for approval" });
+  }
+  if (String(u.section || "") !== "mission") {
+    return res.status(400).json({ error: "only mission uploads can be approved into the library" });
+  }
+  try {
+    const { missionId, updated } = promoteMissionUploadToLibrary(u);
+    getDb()
+      .prepare("UPDATE uploads SET validation_state = 'library', reject_reason = '' WHERE id = ?")
+      .run(req.params.id);
+    audit(req, "upload.approve", req.params.id, updated ? "library-updated" : "library");
+    res.json({ status: "ok", section: "mission", missionId, library: true, updated });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : "could not add to library" });
+  }
 });
 
 apiRouter.post("/uploads/:id/reject", requirePerm("mission.manage"), (req, res) => {
@@ -2958,124 +3576,11 @@ apiRouter.post("/uploads/:id/reject", requirePerm("mission.manage"), (req, res) 
   res.json({ status: "ok" });
 });
 
-apiRouter.post("/uploads/:id/deploy", requirePerm("mission.manage"), async (req: AuthedRequest, res) => {
-  const u = getDb().prepare("SELECT * FROM uploads WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
-  if (!u) return res.status(404).json({ error: "not found" });
-  if (u.validation_state !== "approved") return res.status(400).json({ error: "upload must be approved first" });
-
-  const instanceId = String(req.body?.instanceId || "");
-  if (!instanceId) return res.status(400).json({ error: "instanceId required" });
-  const inst = getDb().prepare("SELECT * FROM instances WHERE id = ?").get(instanceId) as Record<string, unknown> | undefined;
-  if (!inst) return res.status(404).json({ error: "instance not found" });
-  const hostId = String(inst.host_id);
-  const hub = getHub();
-  if (!hub.isOnline(hostId)) return res.status(503).json({ error: "agent offline" });
-
-  const storedPath = String(u.stored_path || "");
-  if (!storedPath || !fs.existsSync(storedPath)) return res.status(404).json({ error: "quarantine file missing on panel" });
-
-  const section = String(u.section || "mission");
-  const originalName = String(u.original_name || "file");
-  const bytes = fs.readFileSync(storedPath);
-  const maxBytes = 80 * 1024 * 1024;
-  if (bytes.length > maxBytes) return res.status(413).json({ error: "file too large to push over agent channel (80MB max)" });
-
-  let root = "mpmissions";
-  let relativePath = originalName;
-  if (section === "key") {
-    root = "keys";
-  } else if (section === "config") {
-    root = "profiles";
-    relativePath = path.posix.join(String(inst.profile_dir || "profiles").replace(/\\/g, "/"), originalName);
-    // profiles root already includes profiles/; use instance profile subdir name only
-    const profileDir = String(inst.profile_dir || "profiles");
-    relativePath = path.basename(profileDir) === profileDir ? path.posix.join(profileDir, originalName) : originalName;
-  }
-
-  try {
-    const result = await hub.dispatch(
-      hostId,
-      "file.deploy",
-      {
-        root: section === "config" ? "arma" : root,
-        relativePath:
-          section === "config"
-            ? path.posix.join(String(inst.profile_dir || "profiles").replace(/\\/g, "/"), originalName)
-            : relativePath,
-        contentBase64: bytes.toString("base64"),
-      },
-      180_000,
-    );
-    if (!result.ok) return res.status(502).json({ error: result.error || "deploy failed", result });
-
-    let missionId: string | undefined;
-    if (section === "mission") {
-      const missionsDir = path.join(config.repoRoot, "deploy", "missions");
-      fs.mkdirSync(missionsDir, { recursive: true });
-      const pboName = originalName;
-      const existing = getDb()
-        .prepare("SELECT id, stored_path FROM missions WHERE lower(pbo_filename) = lower(?)")
-        .get(pboName) as { id: string; stored_path: string } | undefined;
-      missionId = existing?.id || uuid();
-      const dest = path.join(missionsDir, `${missionId}-${pboName}`);
-      fs.copyFileSync(storedPath, dest);
-      if (existing?.stored_path && existing.stored_path !== dest && fs.existsSync(existing.stored_path)) {
-        try {
-          fs.unlinkSync(existing.stored_path);
-        } catch {
-          /* ignore */
-        }
-      }
-      if (existing) {
-        getDb()
-          .prepare(
-            `UPDATE missions SET name=?, pbo_filename=?, content_hash=?, stored_path=? WHERE id=?`,
-          )
-          .run(pboName, pboName, u.content_hash, dest, missionId);
-      } else {
-        getDb()
-          .prepare("INSERT INTO missions(id, name, pbo_filename, content_hash, stored_path) VALUES (?, ?, ?, ?, ?)")
-          .run(missionId, pboName, pboName, u.content_hash, dest);
-      }
-    }
-
-    const jobId = uuid();
-    getDb()
-      .prepare(
-        `INSERT INTO jobs(id, kind, host_id, instance_id, state, stage, progress, requested_by)
-         VALUES (?, 'file_deploy', ?, ?, 'done', 'done', ?, ?)`,
-      )
-      .run(
-        jobId,
-        hostId,
-        instanceId,
-        JSON.stringify([
-          {
-            stage: "done",
-            message: `Deployed ${originalName} → ${result.data?.path || relativePath}`,
-            at: new Date().toISOString(),
-          },
-        ]),
-        req.user?.id || null,
-      );
-    pruneInstanceJobs(String(instanceId));
-
-    audit(req, "upload.deploy", req.params.id, "ok");
-    res.json({
-      status: "ok",
-      jobId,
-      missionId,
-      hostId,
-      instanceId,
-      deployedPath: result.data?.path,
-      bytes: result.data?.bytes,
-      section,
-      fileName: originalName,
-    });
-  } catch (e) {
-    audit(req, "upload.deploy", req.params.id, "failed");
-    res.status(503).json({ error: e instanceof Error ? e.message : "deploy failed" });
-  }
+/** Push an approved key/config upload to a host. Missions go to the library on approve; Apply copies PBOs. */
+apiRouter.post("/uploads/:id/deploy", requirePerm("mission.manage"), (_req, res) => {
+  res.status(410).json({
+    error: "Key/config upload deploy was removed — use Host files for ad-hoc host files; missions use Approve + Apply",
+  });
 });
 
 apiRouter.get("/missions", (_req, res) => {
@@ -3083,27 +3588,299 @@ apiRouter.get("/missions", (_req, res) => {
   res.json(rows.map((m) => ({ id: m.id, name: m.name, pboFilename: m.pbo_filename })));
 });
 
-apiRouter.delete("/missions/:id", requirePerm("mission.manage"), (req, res) => {
-  getDb().prepare("DELETE FROM missions WHERE id = ?").run(req.params.id);
+function missionBlockingInstances(missionId: string) {
+  const hub = getHub();
+  const rows = getDb()
+    .prepare(
+      `SELECT i.id, i.name, i.host_id, i.state, i.current_profile_id, h.name AS host_name, p.name AS profile_name
+       FROM instances i
+       JOIN hosts h ON h.id = i.host_id
+       JOIN mission_profiles p ON p.id = i.current_profile_id
+       WHERE p.mission_id = ?`,
+    )
+    .all(missionId) as {
+    id: string;
+    name: string;
+    host_id: string;
+    state: string;
+    current_profile_id: string;
+    host_name: string;
+    profile_name: string;
+  }[];
+
+  const blocking: {
+    id: string;
+    name: string;
+    hostId: string;
+    hostName: string;
+    state: string;
+    profileId: string;
+    profileName: string;
+  }[] = [];
+
+  for (const row of rows) {
+    const live = hub.getInstanceStatus(String(row.host_id), String(row.id));
+    const state = String(live?.state || row.state || "stopped").toLowerCase();
+    const active = state === "running" || state === "starting" || !!live?.pid;
+    if (!active) continue;
+    blocking.push({
+      id: String(row.id),
+      name: String(row.name),
+      hostId: String(row.host_id),
+      hostName: String(row.host_name || ""),
+      state,
+      profileId: String(row.current_profile_id),
+      profileName: String(row.profile_name || ""),
+    });
+  }
+  return blocking;
+}
+
+apiRouter.get("/missions/:id/evict-preview", requirePerm("mission.manage"), (req, res) => {
+  const mission = getDb().prepare("SELECT * FROM missions WHERE id = ?").get(req.params.id) as
+    | Record<string, unknown>
+    | undefined;
+  if (!mission) return res.status(404).json({ error: "not found" });
+
+  const profilesAffected = getDb()
+    .prepare(`SELECT id, name FROM mission_profiles WHERE mission_id = ? ORDER BY name`)
+    .all(req.params.id) as { id: string; name: string }[];
+
+  const blockingInstances = missionBlockingInstances(req.params.id);
+
+  res.json({
+    mission: {
+      id: mission.id,
+      name: mission.name,
+      pboFilename: mission.pbo_filename,
+      storedPath: mission.stored_path || "",
+    },
+    profilesAffected,
+    blockingInstances,
+    canEvict: blockingInstances.length === 0,
+  });
+});
+
+/**
+ * Send an approved library mission back to Waiting approval.
+ * Optionally deletes the PBO from hosts (default on). Profiles lose the mission link.
+ */
+async function deleteMissionPboFromHosts(pboFilename: string) {
+  const hostResults: { hostId: string; hostName: string; status: string; detail?: string }[] = [];
+  if (!pboFilename) return hostResults;
+  const hub = getHub();
+  const hosts = getDb().prepare("SELECT id, name FROM hosts").all() as { id: string; name: string }[];
+  for (const h of hosts) {
+    if (!hub.isOnline(h.id)) {
+      hostResults.push({ hostId: h.id, hostName: h.name, status: "skipped", detail: "agent offline" });
+      continue;
+    }
+    try {
+      const result = await hub.dispatch(
+        h.id,
+        "file.delete",
+        { root: "mpmissions", relativePath: pboFilename },
+        30_000,
+      );
+      if (!result.ok) {
+        hostResults.push({
+          hostId: h.id,
+          hostName: h.name,
+          status: "failed",
+          detail: result.error || result.message || "delete failed",
+        });
+      } else if (result.data?.skipped) {
+        hostResults.push({ hostId: h.id, hostName: h.name, status: "absent" });
+      } else {
+        hostResults.push({ hostId: h.id, hostName: h.name, status: "deleted" });
+      }
+    } catch (e) {
+      hostResults.push({
+        hostId: h.id,
+        hostName: h.name,
+        status: "failed",
+        detail: e instanceof Error ? e.message : "delete failed",
+      });
+    }
+  }
+  return hostResults;
+}
+
+apiRouter.post("/missions/:id/withdraw", requirePerm("mission.manage"), async (req: AuthedRequest, res) => {
+  const missionId = req.params.id;
+  const mission = getDb().prepare("SELECT * FROM missions WHERE id = ?").get(missionId) as
+    | Record<string, unknown>
+    | undefined;
+  if (!mission) return res.status(404).json({ error: "not found" });
+
+  const blockingInstances = missionBlockingInstances(missionId);
+  if (blockingInstances.length) {
+    return res.status(409).json({
+      error: "Mission is in use by a running instance — stop those instances first",
+      blockingInstances,
+    });
+  }
+
+  const pboName = String(mission.pbo_filename || mission.name || "").trim();
+  if (!pboName) return res.status(400).json({ error: "mission has no filename" });
+
+  const deleteFromHosts = req.body?.deleteFromHosts !== false;
+  const profilesCleared = getDb()
+    .prepare(`SELECT id, name FROM mission_profiles WHERE mission_id = ? ORDER BY name`)
+    .all(missionId) as { id: string; name: string }[];
+
+  const stored = String(mission.stored_path || "").trim();
+  if (!stored || !fs.existsSync(stored)) {
+    return res.status(400).json({ error: "mission file missing on panel — re-upload instead" });
+  }
+
+  const hostResults = deleteFromHosts ? await deleteMissionPboFromHosts(pboName) : [];
+
+  const pending = getDb()
+    .prepare(
+      `SELECT id FROM uploads
+       WHERE section = 'mission' AND validation_state = 'quarantined' AND lower(original_name) = lower(?)
+       LIMIT 1`,
+    )
+    .get(pboName) as { id: string } | undefined;
+
+  let uploadId = pending?.id;
+  if (!uploadId) {
+    const libraryUpload = getDb()
+      .prepare(
+        `SELECT id, stored_path FROM uploads
+         WHERE section = 'mission' AND validation_state = 'library' AND lower(original_name) = lower(?)
+         ORDER BY datetime(created_at) DESC LIMIT 1`,
+      )
+      .get(pboName) as { id: string; stored_path: string } | undefined;
+
+    const quarantineDir = path.join(config.repoRoot, "deploy", "quarantine");
+    fs.mkdirSync(quarantineDir, { recursive: true });
+
+    if (libraryUpload) {
+      uploadId = libraryUpload.id;
+      const dest = path.join(quarantineDir, `${uploadId}-${path.basename(pboName)}`);
+      fs.copyFileSync(stored, dest);
+      getDb()
+        .prepare(
+          `UPDATE uploads SET validation_state = 'quarantined', reject_reason = '', stored_path = ?, content_hash = ?, size_bytes = ?
+           WHERE id = ?`,
+        )
+        .run(dest, String(mission.content_hash || ""), fs.statSync(dest).size, uploadId);
+    } else {
+      uploadId = uuid();
+      const dest = path.join(quarantineDir, `${uploadId}-${path.basename(pboName)}`);
+      fs.copyFileSync(stored, dest);
+      getDb()
+        .prepare(
+          `INSERT INTO uploads(id, uploader_id, section, original_name, stored_path, content_hash, size_bytes, detected_type, validation_state)
+           VALUES (?, ?, 'mission', ?, ?, ?, ?, '.pbo', 'quarantined')`,
+        )
+        .run(
+          uploadId,
+          req.user?.id || null,
+          path.basename(pboName),
+          dest,
+          String(mission.content_hash || ""),
+          fs.statSync(dest).size,
+        );
+    }
+  }
+
+  // Quarantine holds the bytes for re-approval; drop the library copy.
+  if (stored && fs.existsSync(stored)) {
+    try {
+      fs.unlinkSync(stored);
+    } catch {
+      /* ignore */
+    }
+  }
+  getDb().prepare("DELETE FROM missions WHERE id = ?").run(missionId);
+  audit(req, "mission.withdraw", missionId, deleteFromHosts ? "with-hosts" : "panel-only");
+
+  res.json({
+    status: "ok",
+    uploadId,
+    profilesCleared,
+    hostResults,
+    deleteFromHosts,
+  });
+});
+
+async function performMissionEvict(
+  req: AuthedRequest,
+  missionId: string,
+  deleteFromHosts: boolean,
+): Promise<
+  | { ok: true; profilesCleared: { id: string; name: string }[]; hostResults: { hostId: string; hostName: string; status: string; detail?: string }[]; deleteFromHosts: boolean }
+  | { ok: false; status: number; body: Record<string, unknown> }
+> {
+  const mission = getDb().prepare("SELECT * FROM missions WHERE id = ?").get(missionId) as
+    | Record<string, unknown>
+    | undefined;
+  if (!mission) return { ok: false, status: 404, body: { error: "not found" } };
+
+  const blockingInstances = missionBlockingInstances(missionId);
+  if (blockingInstances.length) {
+    return {
+      ok: false,
+      status: 409,
+      body: {
+        error: "Mission is in use by a running instance — stop those instances first",
+        blockingInstances,
+      },
+    };
+  }
+
+  const pboFilename = String(mission.pbo_filename || mission.name || "").trim();
+  const profilesAffected = getDb()
+    .prepare(`SELECT id, name FROM mission_profiles WHERE mission_id = ? ORDER BY name`)
+    .all(missionId) as { id: string; name: string }[];
+
+  const hostResults = deleteFromHosts ? await deleteMissionPboFromHosts(pboFilename) : [];
+
+  const stored = String(mission.stored_path || "").trim();
+  if (stored && fs.existsSync(stored)) {
+    try {
+      fs.unlinkSync(stored);
+    } catch {
+      /* ignore panel file cleanup errors */
+    }
+  }
+
+  // FK ON DELETE SET NULL clears mission_profiles.mission_id
+  getDb().prepare("DELETE FROM missions WHERE id = ?").run(missionId);
+  audit(req, "mission.evict", missionId, deleteFromHosts ? "with-hosts" : "library-only");
+
+  return {
+    ok: true,
+    profilesCleared: profilesAffected,
+    hostResults,
+    deleteFromHosts,
+  };
+}
+
+apiRouter.post("/missions/:id/evict", requirePerm("mission.manage"), async (req: AuthedRequest, res) => {
+  const result = await performMissionEvict(req, req.params.id, req.body?.deleteFromHosts !== false);
+  if (!result.ok) return res.status(result.status).json(result.body);
+  res.json({
+    status: "ok",
+    profilesCleared: result.profilesCleared,
+    hostResults: result.hostResults,
+    deleteFromHosts: result.deleteFromHosts,
+  });
+});
+
+apiRouter.delete("/missions/:id", requirePerm("mission.manage"), async (req: AuthedRequest, res) => {
+  const result = await performMissionEvict(req, req.params.id, true);
+  if (!result.ok) return res.status(result.status).json(result.body);
   res.status(204).end();
 });
 
 // ---- schedules ----
 apiRouter.get("/schedules", (_req, res) => {
-  const rows = getDb().prepare("SELECT * FROM schedules ORDER BY run_at").all() as Record<string, unknown>[];
-  res.json(
-    rows.map((s) => ({
-      id: s.id,
-      profileId: s.profile_id,
-      instanceId: s.instance_id || undefined,
-      name: s.name,
-      runAt: s.run_at,
-      recurrence: s.recurrence,
-      reminderOffsets: jsonParse<number[]>(String(s.reminder_offsets), [60, 15]),
-      discordChannel: s.discord_channel,
-      state: s.state,
-    })),
-  );
+  const rows = getDb().prepare("SELECT * FROM schedules ORDER BY run_at").all() as import("../schedules/runner.js").ScheduleRow[];
+  res.json(rows.map((s) => scheduleDto(s)));
 });
 
 apiRouter.post("/schedules", requirePerm("schedule.manage"), (req, res) => {
@@ -3114,10 +3891,18 @@ apiRouter.post("/schedules", requirePerm("schedule.manage"), (req, res) => {
   const inst = getDb().prepare("SELECT id FROM instances WHERE id = ?").get(instanceId);
   if (!inst) return res.status(400).json({ error: "instance not found" });
   const id = uuid();
+  const fallbackProfileId = String(b.fallbackProfileId || "").trim() || null;
+  if (fallbackProfileId) {
+    const fb = getDb().prepare("SELECT id FROM mission_profiles WHERE id = ?").get(fallbackProfileId);
+    if (!fb) return res.status(400).json({ error: "fallback profile not found" });
+    if (fallbackProfileId === String(b.profileId)) {
+      return res.status(400).json({ error: "fallback profile must differ from the operation profile" });
+    }
+  }
   getDb()
     .prepare(
-      `INSERT INTO schedules(id, profile_id, instance_id, name, run_at, recurrence, reminder_offsets, discord_channel, state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled')`,
+      `INSERT INTO schedules(id, profile_id, instance_id, name, run_at, recurrence, reminder_offsets, discord_channel, requester_discord_id, fallback_profile_id, state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled')`,
     )
     .run(
       id,
@@ -3126,10 +3911,127 @@ apiRouter.post("/schedules", requirePerm("schedule.manage"), (req, res) => {
       String(b.name || ""),
       String(b.runAt || new Date().toISOString()),
       String(b.recurrence || "none"),
-      JSON.stringify(b.reminderOffsets || [60, 15]),
+      JSON.stringify(b.reminderOffsets || [1440, 360, 60, 0]),
       String(b.discordChannel || ""),
+      String(b.requesterDiscordId || "").trim(),
+      fallbackProfileId,
     );
+  const created = getDb().prepare("SELECT * FROM schedules WHERE id = ?").get(id) as
+    | import("../schedules/runner.js").ScheduleRow
+    | undefined;
+  if (created) {
+    void import("../discord/bot.js")
+      .then(({ postScheduleCreatedMessage }) => postScheduleCreatedMessage(created))
+      .catch((e) => console.warn("[schedules] discord create notify failed", e));
+  }
   res.status(201).json({ id });
+});
+
+apiRouter.put("/schedules/:id", requirePerm("schedule.manage"), (req, res) => {
+  const existing = getDb().prepare("SELECT * FROM schedules WHERE id = ?").get(req.params.id) as
+    | import("../schedules/runner.js").ScheduleRow
+    | undefined;
+  if (!existing) return res.status(404).json({ error: "not found" });
+  const st = String(existing.state || "").toLowerCase();
+  if (st === "applying" || st === "restoring") {
+    return res.status(409).json({ error: "cannot edit a schedule while it is applying or restoring" });
+  }
+
+  const b = req.body || {};
+  const profileId = String(b.profileId ?? existing.profile_id).trim();
+  const instanceId = String(b.instanceId ?? existing.instance_id ?? "").trim();
+  if (!profileId) return res.status(400).json({ error: "profileId required" });
+  if (!instanceId) return res.status(400).json({ error: "instanceId required" });
+  const profile = getDb().prepare("SELECT id FROM mission_profiles WHERE id = ?").get(profileId);
+  if (!profile) return res.status(400).json({ error: "profile not found" });
+  const inst = getDb().prepare("SELECT id FROM instances WHERE id = ?").get(instanceId);
+  if (!inst) return res.status(400).json({ error: "instance not found" });
+
+  let fallbackProfileId: string | null =
+    b.fallbackProfileId !== undefined
+      ? String(b.fallbackProfileId || "").trim() || null
+      : existing.fallback_profile_id || null;
+  if (fallbackProfileId) {
+    const fb = getDb().prepare("SELECT id FROM mission_profiles WHERE id = ?").get(fallbackProfileId);
+    if (!fb) return res.status(400).json({ error: "fallback profile not found" });
+  }
+  if (fallbackProfileId && fallbackProfileId === profileId) {
+    return res.status(400).json({ error: "fallback profile must differ from the operation profile" });
+  }
+
+  const name = b.name != null ? String(b.name) : String(existing.name || "");
+  const runAt = b.runAt != null ? String(b.runAt) : String(existing.run_at);
+  const recurrence = b.recurrence != null ? String(b.recurrence) : String(existing.recurrence || "none");
+  const discordChannel = b.discordChannel != null ? String(b.discordChannel) : String(existing.discord_channel || "");
+  const requesterDiscordId =
+    b.requesterDiscordId != null ? String(b.requesterDiscordId).trim() : String(existing.requester_discord_id || "");
+  const reminderOffsets =
+    b.reminderOffsets != null
+      ? JSON.stringify(b.reminderOffsets)
+      : String(existing.reminder_offsets || "[1440,360,60,0]");
+
+  const runAtChanged = runAt !== existing.run_at;
+  let nextState = existing.state;
+  let confirmedAt = existing.confirmed_at;
+  let confirmedBy = existing.confirmed_by;
+  let confirmSource = existing.confirm_source;
+  let approvedBy = existing.approved_by;
+  let remindersSent = existing.reminders_sent;
+  if (st === "live") {
+    // Live ops: only allow metadata / fallback changes; keep live.
+    nextState = "live";
+  } else if (runAtChanged) {
+    remindersSent = "[]";
+    const stillFuture = new Date(runAt).getTime() > Date.now();
+    const wasConfirmed = st === "confirmed" || !!existing.confirmed_at;
+    if (wasConfirmed && stillFuture) {
+      nextState = "confirmed";
+    } else {
+      nextState = "scheduled";
+      confirmedAt = null;
+      confirmedBy = "";
+      confirmSource = "";
+      approvedBy = null;
+    }
+  } else if (["done", "failed", "skipped"].includes(st)) {
+    nextState = "scheduled";
+    remindersSent = "[]";
+    confirmedAt = null;
+    confirmedBy = "";
+    confirmSource = "";
+    approvedBy = null;
+  }
+
+  getDb()
+    .prepare(
+      `UPDATE schedules SET
+         profile_id=?, instance_id=?, name=?, run_at=?, recurrence=?, reminder_offsets=?,
+         discord_channel=?, requester_discord_id=?, fallback_profile_id=?, state=?,
+         confirmed_at=?, confirmed_by=?, confirm_source=?, approved_by=?,
+         reminders_sent=?, last_error=''
+       WHERE id=?`,
+    )
+    .run(
+      profileId,
+      instanceId,
+      name,
+      runAt,
+      recurrence,
+      reminderOffsets,
+      discordChannel,
+      requesterDiscordId,
+      fallbackProfileId,
+      nextState,
+      confirmedAt,
+      confirmedBy,
+      confirmSource,
+      approvedBy,
+      remindersSent,
+      existing.id,
+    );
+
+  const updated = getDb().prepare("SELECT * FROM schedules WHERE id = ?").get(existing.id) as import("../schedules/runner.js").ScheduleRow;
+  res.json(scheduleDto(updated));
 });
 
 apiRouter.delete("/schedules/:id", requirePerm("schedule.manage"), (req, res) => {
@@ -3137,10 +4039,56 @@ apiRouter.delete("/schedules/:id", requirePerm("schedule.manage"), (req, res) =>
   res.status(204).end();
 });
 
-apiRouter.post("/schedules/:id/approve", requirePerm("schedule.manage"), (req: AuthedRequest, res) => {
-  getDb()
-    .prepare("UPDATE schedules SET state = 'approved', approved_by = ? WHERE id = ?")
-    .run(req.user?.email || "", req.params.id);
+apiRouter.post("/schedules/:id/confirm", (req: AuthedRequest, res) => {
+  if (!canConfirmSchedule(req.grants)) return res.status(403).json({ error: "forbidden" });
+  const result = confirmSchedule(req.params.id, {
+    label: req.user?.email || "panel",
+    source: "panel",
+    userId: req.user?.id || null,
+  });
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ status: "ok" });
+});
+
+apiRouter.post("/schedules/:id/stand-down", async (req: AuthedRequest, res) => {
+  if (!canStandDownSchedule(req.grants)) return res.status(403).json({ error: "forbidden" });
+  try {
+    const result = await standDownScheduleOccurrence(req.params.id, {
+      label: req.user?.email || "panel",
+      source: "panel",
+      userId: req.user?.id || null,
+    });
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json({ status: "ok" });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "stand down failed" });
+  }
+});
+
+apiRouter.post("/schedules/:id/finish", async (req: AuthedRequest, res) => {
+  if (!canFinishSchedule(req.grants)) return res.status(403).json({ error: "forbidden" });
+  try {
+    const result = await finishScheduleOperation(req.params.id, {
+      label: req.user?.email || "panel",
+      source: "panel",
+      userId: req.user?.id || null,
+    });
+    if (!result.ok) return res.status(400).json({ error: result.error, jobId: result.jobId });
+    res.json({ status: "ok", jobId: result.jobId });
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "finish failed" });
+  }
+});
+
+/** @deprecated use /confirm — kept for older UI */
+apiRouter.post("/schedules/:id/approve", (req: AuthedRequest, res) => {
+  if (!canConfirmSchedule(req.grants)) return res.status(403).json({ error: "forbidden" });
+  const result = confirmSchedule(req.params.id, {
+    label: req.user?.email || "panel",
+    source: "panel",
+    userId: req.user?.id || null,
+  });
+  if (!result.ok) return res.status(400).json({ error: result.error });
   res.json({ status: "ok" });
 });
 
@@ -3165,7 +4113,6 @@ apiRouter.get("/users", requirePerm("user.manage"), (_req, res) => {
       id: u.id,
       email: u.email,
       displayName: u.display_name,
-      mfaEnabled: !!u.mfa_enabled,
       disabled: !!u.disabled,
       approved: !!u.approved,
       identities: (byUser.get(u.id) || []).map((i) => ({
@@ -3304,18 +4251,68 @@ apiRouter.delete("/steam-accounts/:id", requirePerm("steam.config"), (req, res) 
 });
 
 apiRouter.get("/discord/config", requirePerm("discord.config"), (_req, res) => {
-  const row = getDb().prepare("SELECT value FROM settings WHERE key = 'discord'").get() as { value: string } | undefined;
-  res.json(jsonParse(row?.value, { enabled: false, token: "", guildId: "", channelId: "", roleId: "" }));
+  res.json(discordPublicConfig());
 });
 
-apiRouter.put("/discord/config", requirePerm("discord.config"), (req, res) => {
-  getDb()
-    .prepare(
-      `INSERT INTO settings(key, value, updated_at) VALUES ('discord', ?, datetime('now'))
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    )
-    .run(JSON.stringify(req.body || {}));
-  res.json({ status: "ok" });
+apiRouter.get("/discord/status", requirePerm("discord.config"), (_req, res) => {
+  const cfg = discordPublicConfig();
+  const runtime = getDiscordBotRuntimeStatus();
+  res.json({
+    ...cfg,
+    connected: runtime.connected,
+    botTag: runtime.botTag,
+    botId: runtime.botId,
+    restartHint: cfg.enabled && cfg.hasToken && !runtime.connected,
+  });
+});
+
+apiRouter.get("/discord/guilds", requirePerm("discord.config"), (_req, res) => {
+  const runtime = getDiscordBotRuntimeStatus();
+  if (!runtime.connected) return res.status(503).json({ error: "bot not connected" });
+  res.json(listDiscordGuilds());
+});
+
+apiRouter.get("/discord/guilds/:id/channels", requirePerm("discord.config"), async (req, res) => {
+  const runtime = getDiscordBotRuntimeStatus();
+  if (!runtime.connected) return res.status(503).json({ error: "bot not connected" });
+  try {
+    res.json(await listDiscordGuildChannels(req.params.id));
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "failed to list channels" });
+  }
+});
+
+apiRouter.get("/discord/guilds/:id/roles", requirePerm("discord.config"), async (req, res) => {
+  const runtime = getDiscordBotRuntimeStatus();
+  if (!runtime.connected) return res.status(503).json({ error: "bot not connected" });
+  try {
+    res.json(await listDiscordGuildRoles(req.params.id));
+  } catch (e) {
+    res.status(500).json({ error: e instanceof Error ? e.message : "failed to list roles" });
+  }
+});
+
+apiRouter.put("/discord/config", requirePerm("discord.config"), async (req, res) => {
+  saveDiscordSettings(req.body || {});
+  audit(req, "discord.config", "settings", "ok");
+  try {
+    const restarted = await restartDiscordBot();
+    res.json({
+      status: "ok",
+      ...discordPublicConfig(),
+      connected: restarted.connected,
+      botTag: restarted.botTag,
+      error: restarted.error,
+    });
+  } catch (e) {
+    res.json({
+      status: "ok",
+      ...discordPublicConfig(),
+      connected: false,
+      botTag: null,
+      error: e instanceof Error ? e.message : "bot restart failed",
+    });
+  }
 });
 
 apiRouter.get("/audit", requirePerm("audit.view"), (_req, res) => {

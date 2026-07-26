@@ -4,8 +4,10 @@ import { api, HcGroup, Host, Instance } from "../api";
 import { useAuth } from "../auth";
 import { AgentSetupWizard } from "../components/AgentSetupWizard";
 import { AddHcGroupModal, HcGroupCard } from "../components/HcGroupCard";
+import { HostFilesModal } from "../components/HostFilesModal";
 import { HostSteamCmdPanel } from "../components/HostSteamCmdPanel";
 import { Modal, StatusBadge, useList } from "../components/ui";
+import { formatDateTime } from "../formatTime";
 
 function formatLastSeen(iso?: string) {
   if (!iso) return "never";
@@ -14,12 +16,12 @@ function formatLastSeen(iso?: string) {
   const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
   if (sec < 60) return `${sec}s ago`;
   if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  return new Date(t).toLocaleString();
+  return formatDateTime(t);
 }
 
 export function Dashboard() {
   const { can } = useAuth();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const hosts = useList<Host[]>(() => api.get("/hosts"));
   const instances = useList<Instance[]>(() => api.get("/instances"));
   const hcGroups = useList<HcGroup[]>(() => api.get("/hc-groups"));
@@ -27,6 +29,11 @@ export function Dashboard() {
   // undefined = closed; null = add/create wizard; Host = setup existing
   const [editHost, setEditHost] = useState<Host | null>(null);
   const [steamcmdHostId, setSteamcmdHostId] = useState<string | null>(null);
+  const [browseFiles, setBrowseFiles] = useState<{
+    hostId: string;
+    root?: string;
+    path?: string;
+  } | null>(null);
   const [busy, setBusy] = useState("");
   const [moreHostId, setMoreHostId] = useState<string | null>(null);
   const [addHcHostId, setAddHcHostId] = useState<string | null>(null);
@@ -40,6 +47,48 @@ export function Dashboard() {
     }, 50);
     return () => window.clearTimeout(t);
   }, [searchParams, hosts.data]);
+
+  useEffect(() => {
+    if (searchParams.get("browse") !== "1") return;
+    const list = hosts.data || [];
+    if (hosts.loading) return;
+    const hostId = searchParams.get("hostId") || list[0]?.id;
+    if (!hostId) return;
+    setBrowseFiles({
+      hostId,
+      root: searchParams.get("root") || undefined,
+      path: searchParams.get("path") || undefined,
+    });
+  }, [searchParams, hosts.data, hosts.loading]);
+
+  function openBrowseFiles(hostId: string) {
+    setBrowseFiles({ hostId });
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("hostId", hostId);
+        next.set("browse", "1");
+        next.delete("root");
+        next.delete("path");
+        return next;
+      },
+      { replace: true },
+    );
+  }
+
+  function closeBrowseFiles() {
+    setBrowseFiles(null);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("browse");
+        next.delete("root");
+        next.delete("path");
+        return next;
+      },
+      { replace: true },
+    );
+  }
 
   useEffect(() => {
     if (!moreHostId) return;
@@ -154,14 +203,14 @@ export function Dashboard() {
                       Mods & server
                     </button>
                   )}
-                  <Link
-                    className={"btn small" + (!h.online ? " disabled" : "")}
-                    to={`/files?hostId=${encodeURIComponent(h.id)}`}
+                  <button
+                    className="btn small"
+                    disabled={!h.online}
                     title={!h.online ? "Connect the agent first" : undefined}
-                    style={!h.online ? { pointerEvents: "none", opacity: 0.5 } : undefined}
+                    onClick={() => openBrowseFiles(h.id)}
                   >
                     Browse files
-                  </Link>
+                  </button>
                   {can("host.add") && (
                     <button className="btn small" onClick={() => setEditHost(h)}>
                       Edit
@@ -224,13 +273,16 @@ export function Dashboard() {
                 {h.agentVersion && <span>Agent {h.agentVersion}</span>}
                 {h.os && <span>{h.os}</span>}
                 {(h.capabilities || []).length > 0 && (
-                  <span>Caps: {(h.capabilities || []).join(", ")}</span>
+                  <span title={(h.capabilities || []).join(", ")}>
+                    {(h.capabilities || []).length} {(h.capabilities || []).length === 1 ? "capability" : "capabilities"}
+                  </span>
                 )}
                 {h.bootstrap && (
                   <span>
-                    SteamCMD {h.bootstrap.steamCmdPresent ? "ok" : "missing"}
+                    {h.bootstrap.steamCmdPresent ? "Steam tools ok" : "Steam tools missing"}
                     {" · "}
                     Arma {h.bootstrap.armaServerPresent ? "installed" : "not installed"}
+                    {!h.bootstrap.armaServerPresent && h.online ? " — use Agent setup → Verify, or Mods & server" : ""}
                   </span>
                 )}
                 <span>{hostInstances.length} instance{hostInstances.length === 1 ? "" : "s"}</span>
@@ -251,7 +303,7 @@ export function Dashboard() {
                       <td><Link to={`/instances/${i.id}`}>{i.name}</Link></td>
                       <td className="muted small">{i.currentProfileName || "—"}</td>
                       <td>
-                        <StatusBadge state={i.status?.state || i.state} online={i.online} />
+                        <StatusBadge state={i.status?.state || i.state} online={h.online} />
                         {i.status?.pid ? <span className="muted small"> · pid {i.status.pid}</span> : null}
                         {i.status?.adopted ? <span className="tag" style={{ marginLeft: 4 }}>adopted</span> : null}
                         {(i.headlessCount ?? 0) > 0 || (i.remoteHcGroups || []).length > 0 ? (
@@ -340,7 +392,12 @@ export function Dashboard() {
                 return (
                   <div className="hc-group-list" style={{ marginTop: 12 }}>
                     <div className="row between" style={{ marginBottom: 8, gap: 8, flexWrap: "wrap" }}>
-                      <div className="muted small">Headless groups on this host</div>
+                      <div>
+                        <div className="muted small">Headless groups</div>
+                        <div className="muted small" style={{ marginTop: 2 }}>
+                          Only if headless clients run on a different computer than the game server.
+                        </div>
+                      </div>
                       {canAddHc && (
                         <button className="btn small" type="button" onClick={() => setAddHcHostId(h.id)}>
                           Add group
@@ -362,7 +419,7 @@ export function Dashboard() {
                       </div>
                     ) : (
                       <div className="muted small">
-                        No headless groups yet. Use these when HCs run on this host for a game server elsewhere.
+                        None yet. Same-computer headless is set on the instance page.
                       </div>
                     )}
                   </div>
@@ -395,6 +452,15 @@ export function Dashboard() {
           host={editHost}
           onClose={() => setEditHost(null)}
           onSaved={() => { setEditHost(null); hosts.reload(); }}
+        />
+      )}
+      {browseFiles && (
+        <HostFilesModal
+          hosts={hosts.data || []}
+          hostId={browseFiles.hostId}
+          initialRoot={browseFiles.root}
+          initialPath={browseFiles.path}
+          onClose={closeBrowseFiles}
         />
       )}
     </div>

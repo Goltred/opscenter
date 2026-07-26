@@ -110,14 +110,14 @@ export function ApplyProfileModal({
           {armaMissing ? (
             <>
               {" "}
-              The host has no Arma dedicated server under <code>{host?.armaRoot}</code> yet — apply will download the{" "}
-              <code>creatordlc</code> branch via SteamCMD first.
+              This host does not have an Arma dedicated server yet — apply will download one first (Creator DLC
+              build).
             </>
           ) : hasCdls ? (
             <>
               {" "}
-              This profile uses Creator DLCs ({(profile.dlcs || []).join(", ")}): apply checks the host and only runs a{" "}
-              <code>creatordlc</code> server update if you are not already there.
+              This profile needs Creator DLCs ({(profile.dlcs || []).join(", ")}). Apply checks the host and updates
+              the server only if it is not already on that build.
             </>
           ) : null}
         </div>
@@ -150,11 +150,11 @@ export function ApplyProfileModal({
         )}
         {customLibrary ? (
           <div className="warn small">
-            Shared mods library (read-only): <code>{host?.modsLibraryPath}</code>.
+            Shared mods folder (read-only): <code>{host?.modsLibraryPath}</code>.
           </div>
         ) : (
           <div className="muted small">
-            Mods resolve from local workshop / <code>mods\</code> / <code>@*</code>. Missing items can be pulled via SteamCMD.
+            Missing mods can be downloaded onto this host when you leave the option below checked.
           </div>
         )}
         <label className="row">
@@ -175,27 +175,27 @@ export function ApplyProfileModal({
         <label className="row">
           <input type="checkbox" style={{ width: "auto" }} checked={downloadMods} onChange={(e) => setDownloadMods(e.target.checked)} />
           {customLibrary
-            ? "Download missing mods via SteamCMD into local armaRoot workshop (shared folder untouched)"
-            : "Download missing workshop mods via SteamCMD"}
+            ? "Download missing mods onto this host (shared folder stays untouched)"
+            : "Download missing mods onto this host"}
         </label>
         <label className="row">
           <input type="checkbox" style={{ width: "auto" }} checked={updateServer} onChange={(e) => setUpdateServer(e.target.checked)} />
-          Update Arma 3 dedicated server (Steam app 233780)
+          Update the Arma dedicated server on this host
         </label>
         <label className="row">
           <input type="checkbox" style={{ width: "auto" }} checked={validate} onChange={(e) => setValidate(e.target.checked)} disabled={!needsSteam} />
-          Validate SteamCMD downloads (slower, repairs files)
+          Verify downloaded files (slower; repairs corrupt installs)
         </label>
         {needsSteam && (
           <div>
             <label>Steam account</label>
             {armaMissing && !downloadMods && !updateServer ? (
               <div className="muted small" style={{ marginBottom: 6 }}>
-                Required to download the Arma dedicated server (creatordlc) onto this host.
+                Required to download the Arma dedicated server onto this host.
               </div>
             ) : hasCdls && !downloadMods && !updateServer ? (
               <div className="muted small" style={{ marginBottom: 6 }}>
-                Used only if the host still needs a creatordlc branch update.
+                Used only if the host still needs a Creator DLC server update.
               </div>
             ) : null}
             {noAccounts ? (

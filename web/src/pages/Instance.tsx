@@ -3,11 +3,15 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, Host, Instance, Job, MissionProfile } from "../api";
 import { useAuth } from "../auth";
 import { ApplyProfileModal, type ApplyProfileOpts } from "../components/ApplyProfileModal";
+import { FinishScheduleModal, type FinishScheduleTarget } from "../components/FinishScheduleModal";
 import { HostSteamCmdPanel } from "../components/HostSteamCmdPanel";
 import { InstanceHeadlessPanel } from "../components/InstanceHeadlessPanel";
 import { linkifyText } from "../components/linkify";
+import { PushSignatureKeysModal } from "../components/SignatureKeys";
 import { useToast } from "../components/Toast";
 import { StatusBadge, useList } from "../components/ui";
+import { formatDateTimeCompact, formatTime, formatTimeWithSeconds } from "../formatTime";
+import { useModNameMap } from "../useModNameMap";
 
 export function InstancePage() {
   const { id = "" } = useParams();
@@ -24,6 +28,7 @@ export function InstancePage() {
   const [consoleLive, setConsoleLive] = useState(false);
   const [rcon, setRcon] = useState("");
   const [syncingKeys, setSyncingKeys] = useState(false);
+  const [pushKeysOpen, setPushKeysOpen] = useState(false);
   const [profileId, setProfileId] = useState("");
   const [applyTarget, setApplyTarget] = useState<MissionProfile | null>(null);
   const [applying, setApplying] = useState(false);
@@ -37,6 +42,7 @@ export function InstancePage() {
     modArg?: string;
     autoInit?: boolean;
   } | null>(null);
+  const [finishingTarget, setFinishingTarget] = useState<FinishScheduleTarget | null>(null);
   const consoleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -198,28 +204,24 @@ export function InstancePage() {
   const jobList = jobs.data || [];
   const activeApply = jobList.find((j) => j.kind === "apply_profile" && (j.state === "running" || j.state === "pending"));
   const focused = focusJobId ? jobList.find((j) => j.id === focusJobId) : undefined;
-  const highlight = focused || activeApply;
-  const showSteamFollow =
-    !!host &&
-    (host.steamcmdRunning ||
-      !!activeApply ||
-      (focused?.kind === "apply_profile" && (focused.state === "running" || focused.state === "pending")));
+  const showSteamFollow = !!host && !!host.steamcmdRunning;
   const lifecycle = String(st?.state || i.state || "").toLowerCase();
   const isStarting = lifecycle === "starting" || controlling === "start";
   const isStopping = lifecycle === "stopping" || controlling === "stop";
   const isRestarting = controlling === "restart";
   const isUp = lifecycle === "running" || lifecycle === "starting" || !!st?.pid;
+  const agentOnline = !!host?.online;
   const controlBusy = !!controlling || !!activeApply;
-  const startDisabled = !i.online || controlBusy || isUp || isStopping;
-  const stopDisabled = !i.online || controlBusy || (!isUp && !isStopping);
-  const restartDisabled = !i.online || controlBusy || isStarting || isStopping || (!isUp && lifecycle !== "crashed");
+  const startDisabled = !agentOnline || controlBusy || isUp || isStopping;
+  const stopDisabled = !agentOnline || controlBusy || (!isUp && !isStopping);
+  const restartDisabled = !agentOnline || controlBusy || isStarting || isStopping || (!isUp && lifecycle !== "crashed");
 
   return (
     <div>
       <div className="page-head row between">
         <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
           <h1 style={{ margin: 0 }}>{i.name}</h1>
-          <StatusBadge state={st?.state || i.state} online={i.online} />
+          <StatusBadge state={st?.state || i.state} online={agentOnline} />
           <span className="tag">port {i.port}</span>
           {st?.pid ? <span className="tag">pid {st.pid}</span> : null}
           {(i.headlessCount ?? 0) > 0 || (st?.headless || []).length > 0 ? (
@@ -235,7 +237,7 @@ export function InstancePage() {
           {st?.adopted && (
             <span className="tag" title="Agent reattached to a process that was already running">adopted</span>
           )}
-          {i.online && (
+          {isUp && (
             <span
               className="tag"
               title={st?.queryOk ? `A2S ok on UDP ${st.queryPort || i.port + 1}` : st?.queryError || "Waiting for Steam query…"}
@@ -265,9 +267,11 @@ export function InstancePage() {
                     ? "Instance is starting…"
                     : isUp
                       ? "Instance is already running"
-                      : !i.online
+                      : !agentOnline
                         ? "Agent offline"
-                        : undefined
+                        : activeApply
+                          ? "Wait for Apply to finish"
+                          : undefined
                 }
                 onClick={() => void control("start")}
               >
@@ -276,7 +280,15 @@ export function InstancePage() {
               <button
                 className="btn"
                 disabled={stopDisabled}
-                title={isStopping ? "Instance is stopping…" : undefined}
+                title={
+                  isStopping
+                    ? "Instance is stopping…"
+                    : !agentOnline
+                      ? "Agent offline"
+                      : activeApply
+                        ? "Wait for Apply to finish"
+                        : undefined
+                }
                 onClick={() => void control("stop")}
               >
                 {isStopping ? "Stopping…" : "Stop"}
@@ -284,7 +296,15 @@ export function InstancePage() {
               <button
                 className="btn"
                 disabled={restartDisabled}
-                title={isStarting ? "Wait until start finishes" : undefined}
+                title={
+                  isStarting
+                    ? "Wait until start finishes"
+                    : !agentOnline
+                      ? "Agent offline"
+                      : activeApply
+                        ? "Wait for Apply to finish"
+                        : undefined
+                }
                 onClick={() => void control("restart")}
               >
                 {isRestarting ? "Restarting…" : "Restart"}
@@ -292,26 +312,165 @@ export function InstancePage() {
             </>
           )}
           {can("mod.manage") && (
-            <button className="btn" onClick={() => void syncKeys()} disabled={syncingKeys}>
-              {syncingKeys ? "Syncing keys…" : "Sync mod keys"}
-            </button>
+            <>
+              <button className="btn" onClick={() => void syncKeys()} disabled={syncingKeys}>
+                {syncingKeys ? "Syncing keys…" : "Sync mod keys"}
+              </button>
+              <button
+                className="btn"
+                disabled={!agentOnline}
+                title={!agentOnline ? "Agent offline" : "Push .bikey files from the panel library"}
+                onClick={() => setPushKeysOpen(true)}
+              >
+                Push signature keys
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {(can("instance.control") || can("instance.config.edit")) && (
-        <InstanceHeadlessPanel
-          instance={i}
-          host={host || null}
-          profile={profiles.data?.find((p) => p.id === i.currentProfileId) || null}
-          canControl={can("instance.control")}
-          canEdit={can("instance.config.edit")}
-          onChanged={() => inst.reload()}
+      {pushKeysOpen && (
+        <PushSignatureKeysModal
+          instanceId={id}
+          instanceName={i.name}
+          onClose={() => setPushKeysOpen(false)}
+          onDone={({ deployed, failed }) => {
+            if (failed) {
+              toast.info(`Pushed ${deployed} key(s)`, { message: `${failed} failed` });
+            } else {
+              toast.success(`Pushed ${deployed} key(s) to host keys folder`);
+            }
+          }}
         />
       )}
 
+      {i.activeOperation && (
+        <div className="warn-banner row between" style={{ marginBottom: 16, marginTop: 12, gap: 12, flexWrap: "wrap" }}>
+          <div>
+            {i.activeOperation.state === "restoring"
+              ? `Restoring ${i.activeOperation.fallbackProfileName || "fallback profile"} after “${i.activeOperation.name}”…`
+              : `Scheduled operation “${i.activeOperation.name}” is running` +
+                (i.activeOperation.fallbackProfileName
+                  ? ` · finish to restore ${i.activeOperation.fallbackProfileName}`
+                  : "")}
+          </div>
+          {(can("schedule.confirm") ||
+            can("schedule.manage") ||
+            can("profile.apply") ||
+            can("instance.control")) &&
+            i.activeOperation.state === "live" &&
+            i.activeOperation.fallbackProfileId && (
+              <button
+                className="btn small primary"
+                onClick={() =>
+                  setFinishingTarget({
+                    scheduleId: i.activeOperation!.scheduleId,
+                    name: i.activeOperation!.name,
+                    fallbackProfileName: i.activeOperation!.fallbackProfileName,
+                    instanceName: i.name,
+                  })
+                }
+              >
+                Finish operation
+              </button>
+            )}
+        </div>
+      )}
+
+      {finishingTarget && (
+        <FinishScheduleModal
+          target={finishingTarget}
+          onClose={() => setFinishingTarget(null)}
+          onFinished={() => {
+            toast.info("Restoring fallback profile…");
+            inst.reload();
+            jobs.reload();
+          }}
+        />
+      )}
+
+      <div className="card" style={{ marginBottom: 16, marginTop: 16 }}>
+        <div className="row between" style={{ flexWrap: "wrap", gap: 12 }}>
+          <div style={{ flex: "1 1 220px" }}>
+            <h2 style={{ marginBottom: 4 }}>Mission profile</h2>
+            {i.currentProfileName ? (
+              <div className="muted small">
+                Loaded: <strong>{i.currentProfileName}</strong>
+              </div>
+            ) : (
+              <div className="muted small">No profile applied yet.</div>
+            )}
+          </div>
+          <div className="row" style={{ flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
+            {can("profile.apply") && (
+              <>
+                <div>
+                  <label className="small muted" style={{ display: "block", marginBottom: 4 }}>Apply profile</label>
+                  <select
+                    value={profileId}
+                    onChange={(e) => setProfileId(e.target.value)}
+                    disabled={!profileList.length || applying || !!activeApply}
+                    style={{ minWidth: 200 }}
+                  >
+                    {profileList.length === 0 && <option value="">No profiles</option>}
+                    {profileList.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}{i.currentProfileId === p.id ? " (loaded)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  className="btn primary"
+                  disabled={!selectedProfile || !host?.online || applying || !!activeApply}
+                  onClick={() => selectedProfile && setApplyTarget(selectedProfile)}
+                >
+                  {applying || activeApply ? "Applying…" : "Apply"}
+                </button>
+              </>
+            )}
+            <Link className="btn" to="/profiles">Edit profiles</Link>
+            {can("instance.config.edit") && (
+              <Link className="btn" to="/profiles#shared-settings">Shared settings</Link>
+            )}
+          </div>
+        </div>
+        <div className="muted small" style={{ marginTop: 8 }}>
+          Apply writes the selected mission onto this instance (and merges shared settings). Do this before{" "}
+          <strong>Start</strong> if you have not applied a profile yet. Edit profiles on the Mission Profiles page —
+          not here. Host tools (mods, install) are on the{" "}
+          {host ? (
+            <Link to={`/?hostId=${encodeURIComponent(host.id)}`}>Dashboard host card</Link>
+          ) : (
+            "Dashboard"
+          )}
+          .
+        </div>
+        {can("profile.apply") && !host?.online && (
+          <div className="muted small" style={{ marginTop: 8 }}>Agent offline — connect the host agent to apply.</div>
+        )}
+        {can("profile.apply") && profileList.length === 0 && (
+          <div className="muted small" style={{ marginTop: 8 }}>
+            No profiles in the library yet. Create one under <Link to="/profiles">Mission Profiles</Link>.
+          </div>
+        )}
+        {(applying || activeApply) && (
+          <div className="muted small" style={{ marginTop: 8 }}>
+            Applying{activeApply?.stage ? ` — ${activeApply.stage}` : "…"} Progress is in Job history
+            {activeApply ? (
+              <>
+                {" "}
+                (<a href={`#job-${activeApply.id}`}>view</a>).
+              </>
+            ) : (
+              "."
+            )}
+          </div>
+        )}
+      </div>
+
       {i.online && (st?.state === "running" || st?.state === "starting" || !!st?.pid) && (
-        <div className="card" style={{ marginBottom: 16, marginTop: 16 }}>
+        <div className="card" style={{ marginBottom: 16 }}>
           <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}>
             <h2 style={{ margin: 0 }}>Steam browser view</h2>
             <span className={"badge stage-" + (st?.queryOk || st?.state === "running" ? "done" : "running")}>
@@ -334,7 +493,7 @@ export function InstancePage() {
               </div>
               <div>
                 <div className="muted small">Last query</div>
-                <div className="muted small">{st.queriedAt ? new Date(st.queriedAt).toLocaleTimeString() : "—"}</div>
+                <div className="muted small">{st.queriedAt ? formatTime(st.queriedAt) : "—"}</div>
               </div>
             </div>
           ) : (
@@ -384,65 +543,16 @@ export function InstancePage() {
         </div>
       )}
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="row between" style={{ flexWrap: "wrap", gap: 12 }}>
-          <div style={{ flex: "1 1 220px" }}>
-            <h2 style={{ marginBottom: 4 }}>Mission profile</h2>
-            {i.currentProfileName ? (
-              <div className="muted small">
-                Loaded: <strong>{i.currentProfileName}</strong>
-              </div>
-            ) : (
-              <div className="muted small">No profile applied yet.</div>
-            )}
-          </div>
-          <div className="row" style={{ flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
-            {can("profile.apply") && (
-              <>
-                <div>
-                  <label className="small muted" style={{ display: "block", marginBottom: 4 }}>Apply profile</label>
-                  <select
-                    value={profileId}
-                    onChange={(e) => setProfileId(e.target.value)}
-                    disabled={!profileList.length || applying || !!activeApply}
-                    style={{ minWidth: 200 }}
-                  >
-                    {profileList.length === 0 && <option value="">No profiles</option>}
-                    {profileList.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}{i.currentProfileId === p.id ? " (loaded)" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <button
-                  className="btn primary"
-                  disabled={!selectedProfile || !host?.online || applying || !!activeApply}
-                  onClick={() => selectedProfile && setApplyTarget(selectedProfile)}
-                >
-                  {applying || activeApply ? "Applying…" : "Apply"}
-                </button>
-              </>
-            )}
-            <Link className="btn" to="/profiles">Edit profiles</Link>
-            {can("instance.config.edit") && (
-              <Link className="btn" to="/profiles#shared-settings">Shared settings</Link>
-            )}
-          </div>
-        </div>
-        <div className="muted small" style={{ marginTop: 8 }}>
-          Apply merges global <Link to="/profiles#shared-settings">shared settings</Link> with the mission profile.
-          Edit shared defaults on the Mission Profiles page — not here.
-        </div>
-        {can("profile.apply") && !host?.online && (
-          <div className="muted small" style={{ marginTop: 8 }}>Agent offline — connect the host agent to apply.</div>
-        )}
-        {can("profile.apply") && profileList.length === 0 && (
-          <div className="muted small" style={{ marginTop: 8 }}>
-            No profiles in the library yet. Create one under <Link to="/profiles">Mission Profiles</Link>.
-          </div>
-        )}
-      </div>
+      {(can("instance.control") || can("instance.config.edit")) && (
+        <InstanceHeadlessPanel
+          instance={i}
+          host={host || null}
+          profile={profiles.data?.find((p) => p.id === i.currentProfileId) || null}
+          canControl={can("instance.control")}
+          canEdit={can("instance.config.edit")}
+          onChanged={() => inst.reload()}
+        />
+      )}
 
       {applyTarget && (
         <ApplyProfileModal
@@ -453,36 +563,6 @@ export function InstancePage() {
           onClose={() => setApplyTarget(null)}
           onConfirm={(opts) => void runApply(applyTarget, opts)}
         />
-      )}
-
-      {highlight && (
-        <div className="card" style={{ marginBottom: 16 }} id={`job-${highlight.id}`}>
-          <div className="row between" style={{ marginBottom: 8 }}>
-            <div>
-              <h2 style={{ margin: 0 }}>
-                {highlight.kind === "apply_profile" ? "Profile apply" : highlight.kind}
-              </h2>
-              <div className="muted small" style={{ marginTop: 4 }}>
-                Started {formatJobWhen(highlight.createdAt)}
-                {highlight.updatedAt && highlight.state !== "pending" ? ` · updated ${formatJobWhen(highlight.updatedAt)}` : ""}
-                <span className="tag" style={{ marginLeft: 8 }}>{highlight.id.slice(0, 8)}…</span>
-              </div>
-            </div>
-            <span className={"badge stage-" + (highlight.state === "done" ? "done" : highlight.state === "failed" ? "failed" : "running")}>
-              {highlight.stage || highlight.state}
-            </span>
-          </div>
-          <JobProgressList job={highlight} expanded />
-          {highlight.error && (
-            <div className="error small" style={{ marginTop: 8 }}>
-              {highlight.error.split("\n").map((line, i) => (
-                <div key={i} className={i === 0 ? undefined : "muted"} style={{ marginTop: i ? 4 : 0 }}>
-                  {linkifyText(line)}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       )}
 
       {showSteamFollow && host && (
@@ -533,10 +613,12 @@ function JobProgressList({
   job,
   expanded,
   onToggle,
+  modNames,
 }: {
   job: Job;
   expanded?: boolean;
   onToggle?: () => void;
+  modNames?: Map<string, string>;
 }) {
   const items = job.progress || [];
   const shown = expanded ? items : items.slice(-3);
@@ -552,7 +634,7 @@ function JobProgressList({
             {formatJobClock(p.at)}
           </span>
           {p.stage ? <span className="tag" style={{ marginRight: 6 }}>{p.stage}</span> : null}
-          {linkifyText(p.message)}
+          {linkifyText(p.message, { modNames })}
         </div>
       ))}
       {onToggle && (hidden > 0 || (expanded && items.length > 3)) && (
@@ -562,7 +644,7 @@ function JobProgressList({
           style={{ marginTop: 8 }}
           onClick={onToggle}
         >
-          {expanded ? "Show less" : `Show ${hidden} earlier line${hidden === 1 ? "" : "s"}`}
+          {expanded ? "Show less" : "Show more"}
         </button>
       )}
     </div>
@@ -570,12 +652,14 @@ function JobProgressList({
 }
 
 function JobHistory({ jobs, focusJobId, loading }: { jobs: Job[]; focusJobId: string; loading: boolean }) {
+  const modNames = useModNameMap();
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const ordered = useMemo(() => {
-    if (!focusJobId) return jobs;
-    const focus = jobs.find((j) => j.id === focusJobId);
+    const pinId = focusJobId || jobs.find((j) => j.kind === "apply_profile" && (j.state === "running" || j.state === "pending"))?.id;
+    if (!pinId) return jobs;
+    const focus = jobs.find((j) => j.id === pinId);
     if (!focus) return jobs;
-    return [focus, ...jobs.filter((j) => j.id !== focusJobId)];
+    return [focus, ...jobs.filter((j) => j.id !== pinId)];
   }, [jobs, focusJobId]);
 
   function toggle(id: string) {
@@ -594,20 +678,25 @@ function JobHistory({ jobs, focusJobId, loading }: { jobs: Job[]; focusJobId: st
         return (
           <div
             key={j.id}
-            id={focused ? undefined : `job-${j.id}`}
+            id={`job-${j.id}`}
             style={{
               borderBottom: "1px solid var(--border)",
               padding: "8px 0",
-              background: focused ? "rgba(88, 166, 255, 0.08)" : undefined,
-              margin: focused ? "0 -8px" : undefined,
-              paddingLeft: focused ? 8 : undefined,
-              paddingRight: focused ? 8 : undefined,
-              borderRadius: focused ? 6 : undefined,
+              background: focused || (active && j.kind === "apply_profile") ? "rgba(88, 166, 255, 0.08)" : undefined,
+              margin: focused || (active && j.kind === "apply_profile") ? "0 -8px" : undefined,
+              paddingLeft: focused || (active && j.kind === "apply_profile") ? 8 : undefined,
+              paddingRight: focused || (active && j.kind === "apply_profile") ? 8 : undefined,
+              borderRadius: focused || (active && j.kind === "apply_profile") ? 6 : undefined,
             }}
           >
             <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}>
               <div>
                 <span className="tag">{j.kind}</span>
+                {j.profileName ? (
+                  <span className="tag" style={{ marginLeft: 6 }} title={j.profileId}>
+                    {j.profileName}
+                  </span>
+                ) : null}
                 <span className="muted small" style={{ marginLeft: 8 }} title={j.createdAt || undefined}>
                   {formatJobWhen(j.createdAt)}
                 </span>
@@ -621,6 +710,30 @@ function JobHistory({ jobs, focusJobId, loading }: { jobs: Job[]; focusJobId: st
                     {expandedIds[j.id] ? "Collapse" : "Expand"}
                   </button>
                 )}
+                {(j.actorLabel || j.triggerKind === "schedule") && (
+                  <div className="muted small" style={{ marginTop: 4 }}>
+                    {j.triggerKind === "schedule" ? (
+                      <>
+                        Schedule
+                        {j.scheduleName || j.actorLabel ? (
+                          <>
+                            {" "}
+                            <strong>{j.scheduleName || j.actorLabel}</strong>
+                          </>
+                        ) : null}
+                        {j.actorLabel &&
+                        j.scheduleName &&
+                        j.actorLabel !== j.scheduleName ? (
+                          <> · by {j.actorLabel}</>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        by <strong>{j.actorLabel}</strong>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
               <span className={"badge stage-" + (j.state === "done" ? "done" : j.state === "failed" ? "failed" : "running")}>
                 {j.stage || j.state}
@@ -630,12 +743,13 @@ function JobHistory({ jobs, focusJobId, loading }: { jobs: Job[]; focusJobId: st
               job={j}
               expanded={expanded}
               onToggle={active || focused ? undefined : () => toggle(j.id)}
+              modNames={modNames}
             />
             {j.error && (
               <div className="error small" style={{ marginTop: 6 }}>
                 {j.error.split("\n").map((line, i) => (
                   <div key={i} className={i === 0 ? undefined : "muted"} style={{ marginTop: i ? 4 : 0 }}>
-                    {linkifyText(line)}
+                    {linkifyText(line, { modNames })}
                   </div>
                 ))}
               </div>
@@ -665,11 +779,11 @@ function formatJobWhen(raw?: string | null): string {
   if (diffSec < 60) return "just now";
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return formatDateTimeCompact(d);
 }
 
 function formatJobClock(raw?: string | null): string {
   const d = parseJobDate(raw);
   if (!d) return "--:--:--";
-  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return formatTimeWithSeconds(d);
 }

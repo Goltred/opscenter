@@ -27,6 +27,7 @@ export function HcGroupCard({
   const [error, setError] = useState("");
 
   async function act(path: string, label: string, body?: unknown) {
+    if (busy) return;
     setBusy(label);
     setError("");
     try {
@@ -40,6 +41,7 @@ export function HcGroupCard({
   }
 
   async function scale(delta: number) {
+    if (busy) return;
     setBusy(delta > 0 ? "add" : "remove");
     setError("");
     try {
@@ -53,6 +55,7 @@ export function HcGroupCard({
   }
 
   async function remove() {
+    if (busy) return;
     if (!confirm(`Delete HC group "${group.name}"? Running processes will be stopped.`)) return;
     setBusy("delete");
     setError("");
@@ -100,21 +103,21 @@ export function HcGroupCard({
         <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
           {canControl && (
             <>
-              <button className="btn small" disabled={!!busy || !group.workerOnline || !group.targetInstanceId} onClick={() => act("start", "start")}>
+              <button className="btn small" disabled={!!busy || !group.workerOnline || !group.targetInstanceId} onClick={() => void act("start", "start")}>
                 {busy === "start" ? "…" : "Start"}
               </button>
-              <button className="btn small" disabled={!!busy || !group.workerOnline} onClick={() => act("stop", "stop")}>
+              <button className="btn small" disabled={!!busy || !group.workerOnline} onClick={() => void act("stop", "stop")}>
                 {busy === "stop" ? "…" : "Stop"}
               </button>
-              <button className="btn small" disabled={!!busy || !group.workerOnline || !group.targetInstanceId} onClick={() => act("restart", "restart")}>
+              <button className="btn small" disabled={!!busy || !group.workerOnline || !group.targetInstanceId} onClick={() => void act("restart", "restart")}>
                 {busy === "restart" ? "…" : "Restart"}
               </button>
               {canEdit && (
                 <>
-                  <button className="btn small" disabled={!!busy || desired >= 8} onClick={() => scale(1)} title="Increase count">
+                  <button className="btn small" disabled={!!busy || desired >= 8} onClick={() => void scale(1)} title="Increase count">
                     +
                   </button>
-                  <button className="btn small" disabled={!!busy || desired <= 0} onClick={() => scale(-1)} title="Decrease count">
+                  <button className="btn small" disabled={!!busy || desired <= 0} onClick={() => void scale(-1)} title="Decrease count">
                     −
                   </button>
                 </>
@@ -122,7 +125,7 @@ export function HcGroupCard({
             </>
           )}
           {canDelete && (
-            <button className="btn small danger" disabled={!!busy} onClick={remove}>
+            <button className="btn small danger" disabled={!!busy} onClick={() => void remove()}>
               {busy === "delete" ? "…" : "Delete"}
             </button>
           )}
@@ -181,6 +184,9 @@ export function AddHcGroupModal({
           <button className="btn ghost small" onClick={onClose}>✕</button>
         </div>
         <div className="grid" style={{ gap: 10, marginTop: 14 }}>
+          <p className="muted small" style={{ margin: 0 }}>
+            Only needed when this computer runs headless clients for a game server on another computer.
+          </p>
           <div>
             <label>Name</label>
             <input value={name} onChange={(e) => setName(e.target.value)} />

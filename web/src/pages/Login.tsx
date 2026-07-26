@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { BrandMark } from "../components/BrandMark";
 import { ProviderIcon } from "../components/ProviderIcons";
+import { PRODUCT_BRAND } from "../theme/catalog";
 
 type Provider = { id: string; label: string; enabled: boolean };
 
@@ -29,7 +31,10 @@ export function Login() {
   return (
     <div className="login-wrap">
       <div className="card login-card">
-        <div className="brand">A3<span>Panel</span></div>
+        <BrandMark />
+        <div className="muted small" style={{ marginTop: 6 }}>
+          {PRODUCT_BRAND.tagline}
+        </div>
         <div className="muted small">Sign in with an account provider. New accounts wait for admin approval.</div>
         {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
         {loading ? (

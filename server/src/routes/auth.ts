@@ -42,8 +42,8 @@ function createSession(userId: string, req: import("express").Request) {
   const expires = new Date(Date.now() + config.sessionTtlHours * 3600 * 1000).toISOString();
   getDb()
     .prepare(
-      `INSERT INTO sessions(id, user_id, csrf_token, expires_at, ip, user_agent, mfa_pending)
-       VALUES (?, ?, ?, ?, ?, ?, 0)`,
+      `INSERT INTO sessions(id, user_id, csrf_token, expires_at, ip, user_agent)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
     .run(hashSessionId(raw), userId, csrf, expires, clientIp(req), req.get("user-agent") || "");
   return { raw, csrf };
@@ -130,10 +130,6 @@ authRouter.post("/login", (_req, res) => {
   res.status(410).json({ error: "password login disabled — use OAuth providers" });
 });
 
-authRouter.post("/mfa", (_req, res) => {
-  res.status(501).json({ error: "mfa not used with OAuth login" });
-});
-
 authRouter.post("/logout", requireAuth, (req: AuthedRequest, res) => {
   if (req.session) getDb().prepare("DELETE FROM sessions WHERE id = ?").run(req.session.id);
   res.clearCookie(SESSION_COOKIE, { path: "/" });
@@ -146,12 +142,4 @@ authRouter.get("/me", requireAuth, (req: AuthedRequest, res) => {
     csrfToken: req.session!.csrf_token,
     grants: req.user!.approved ? req.grants || loadGrants(req.user!.id) : [],
   });
-});
-
-authRouter.post("/mfa/setup", requireAuth, (_req, res) => {
-  res.status(501).json({ error: "mfa setup not implemented" });
-});
-
-authRouter.post("/mfa/enable", requireAuth, (_req, res) => {
-  res.status(501).json({ error: "mfa enable not implemented" });
 });

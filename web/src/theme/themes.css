@@ -1,0 +1,148 @@
+/* ============================================================
+   Theme tokens — switch with html[data-theme="…"]
+   Designed for military / automation ops consoles (not neon SaaS).
+   ============================================================ */
+
+:root,
+html[data-theme="legacy"] {
+  --bg: #0d1117;
+  --bg2: #161b22;
+  --bg3: #1c2330;
+  --border: #2a313c;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #2f81f7;
+  --accent2: #1f6feb;
+  --accent-fg: #ffffff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --radius: 10px;
+  --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "IBM Plex Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --pattern-line: rgba(230, 237, 243, 0.035);
+  --login-wash: #11203a;
+  --sidebar-edge: transparent;
+  --card-inset: transparent;
+}
+
+/* NATO briefing: charcoal + olive + brass — no neon */
+html[data-theme="steel-brief"] {
+  --bg: #0e110e;
+  --bg2: #151914;
+  --bg3: #1c221a;
+  --border: #2c3528;
+  --text: #e7eadf;
+  --muted: #8f9786;
+  --accent: #c4a35a;
+  --accent2: #a8863f;
+  --accent-fg: #14120c;
+  --green: #7faf6a;
+  --red: #d1645a;
+  --yellow: #c9a227;
+  --radius: 6px;
+  --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "IBM Plex Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --pattern-line: rgba(196, 163, 90, 0.06);
+  --login-wash: #1a2214;
+  --sidebar-edge: #3d4a32;
+  --card-inset: rgba(196, 163, 90, 0.04);
+}
+
+/* NVG console: deep green-black + phosphor — restrained, not glow-spam */
+html[data-theme="night-optics"] {
+  --bg: #070b09;
+  --bg2: #0c1210;
+  --bg3: #121a16;
+  --border: #1e2c24;
+  --text: #d7efe0;
+  --muted: #7a9688;
+  --accent: #5cdb95;
+  --accent2: #3fad72;
+  --accent-fg: #06140c;
+  --green: #5cdb95;
+  --red: #e07070;
+  --yellow: #d2c35a;
+  --radius: 4px;
+  --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "IBM Plex Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --pattern-line: rgba(92, 219, 149, 0.05);
+  --login-wash: #0a1812;
+  --sidebar-edge: #2a4a38;
+  --card-inset: rgba(92, 219, 149, 0.03);
+}
+
+/* Radio / C2: cool slate + desaturated cobalt */
+html[data-theme="signal"] {
+  --bg: #0b0e14;
+  --bg2: #12161e;
+  --bg3: #181e29;
+  --border: #2a3344;
+  --text: #e4e9f2;
+  --muted: #8b95a8;
+  --accent: #5b8def;
+  --accent2: #3f6fd4;
+  --accent-fg: #ffffff;
+  --green: #4fbf9a;
+  --red: #e06b6b;
+  --yellow: #d0a65a;
+  --radius: 8px;
+  --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "IBM Plex Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --pattern-line: rgba(91, 141, 239, 0.05);
+  --login-wash: #121a2c;
+  --sidebar-edge: #2f4060;
+  --card-inset: rgba(91, 141, 239, 0.04);
+}
+
+/* Industrial forge: warm black + copper */
+html[data-theme="foundry"] {
+  --bg: #100e0c;
+  --bg2: #171310;
+  --bg3: #201a15;
+  --border: #3a2e24;
+  --text: #f0e6da;
+  --muted: #9a8b7a;
+  --accent: #d08a4c;
+  --accent2: #b06e36;
+  --accent-fg: #1a120c;
+  --green: #8fba6e;
+  --red: #e0705c;
+  --yellow: #d4a84b;
+  --radius: 6px;
+  --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "IBM Plex Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --pattern-line: rgba(208, 138, 76, 0.06);
+  --login-wash: #241810;
+  --sidebar-edge: #5a3d24;
+  --card-inset: rgba(208, 138, 76, 0.04);
+}
+
+/* Live range: concrete + sand ochre */
+html[data-theme="range"] {
+  --bg: #100f0d;
+  --bg2: #161512;
+  --bg3: #1e1c18;
+  --border: #353128;
+  --text: #ece7db;
+  --muted: #9a9486;
+  --accent: #d2a15a;
+  --accent2: #b8863f;
+  --accent-fg: #1a160e;
+  --green: #8fb07a;
+  --red: #d46a5c;
+  --yellow: #d2a15a;
+  --radius: 5px;
+  --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "IBM Plex Sans", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --pattern-line: rgba(210, 161, 90, 0.055);
+  --login-wash: #221c12;
+  --sidebar-edge: #5a4a28;
+  --card-inset: rgba(210, 161, 90, 0.035);
+}

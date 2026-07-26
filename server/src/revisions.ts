@@ -3,6 +3,11 @@ import { getDb, jsonParse } from "./db.js";
 import { normalizeCustomDifficulty, normalizeForcedDifficulty } from "./arma/difficulty.js";
 import { normalizeDlcCodes } from "./arma/dlcs.js";
 import { clampHeadlessCount } from "./arma/headless.js";
+import {
+  normalizeMissionSource,
+  normalizeMissionTemplateInput,
+  type MissionSource,
+} from "./arma/serverCfg.js";
 
 export const REVISION_KEEP = 50;
 
@@ -12,8 +17,11 @@ export type ProfileSnapshot = {
   name: string;
   mods: string[];
   serverMods: string[];
+  missionSource: MissionSource;
   missionId: string | null;
+  missionTemplate: string;
   modlistId: string | null;
+  difficultyPresetId: string | null;
   serverCfgOverrides: Record<string, unknown>;
   basicCfgOverrides: Record<string, unknown>;
   extraArgs: string[];
@@ -24,6 +32,11 @@ export type ProfileSnapshot = {
 };
 
 export type SharedCfgSnapshot = Record<string, unknown>;
+
+export type DifficultyPresetSnapshot = {
+  name: string;
+  difficulty: ReturnType<typeof normalizeCustomDifficulty>;
+};
 
 export type RevisionMeta = {
   id: string;
@@ -48,12 +61,16 @@ export function profileSnapshotFromRow(row: Record<string, unknown>): ProfileSna
   const forced = normalizeForcedDifficulty(overrides.forcedDifficulty);
   if (forced) overrides.forcedDifficulty = forced;
   else delete overrides.forcedDifficulty;
+  const missionSource = normalizeMissionSource(row.mission_source);
   return {
     name: String(row.name || ""),
     mods: jsonParse<string[]>(String(row.mods || "[]"), []),
     serverMods: jsonParse<string[]>(String(row.server_mods || "[]"), []),
-    missionId: row.mission_id ? String(row.mission_id) : null,
+    missionSource,
+    missionId: missionSource === "library" && row.mission_id ? String(row.mission_id) : null,
+    missionTemplate: missionSource === "mod" ? normalizeMissionTemplateInput(row.mission_template) : "",
     modlistId: row.modlist_id ? String(row.modlist_id) : null,
+    difficultyPresetId: row.difficulty_preset_id ? String(row.difficulty_preset_id) : null,
     serverCfgOverrides: overrides,
     basicCfgOverrides: jsonParse(String(row.basic_cfg_overrides || "{}"), {}),
     extraArgs: jsonParse<string[]>(String(row.extra_args || "[]"), []),
@@ -68,15 +85,34 @@ export function profileSnapshotFromRow(row: Record<string, unknown>): ProfileSna
 
 export function profileSnapshotFromBody(b: Record<string, unknown>): ProfileSnapshot {
   const overrides = { ...((b.serverCfgOverrides as Record<string, unknown>) || {}) };
+  // Shared-settings-only keys — never store as profile overrides
+  for (const k of [
+    "password",
+    "passwordAdmin",
+    "passwordadmin",
+    "serverCommandPassword",
+    "servercommandpassword",
+    "admins",
+    "adminIds",
+  ]) {
+    delete overrides[k];
+  }
   const forced = normalizeForcedDifficulty(overrides.forcedDifficulty);
   if (forced) overrides.forcedDifficulty = forced;
   else delete overrides.forcedDifficulty;
+  const missionSource = normalizeMissionSource(b.missionSource);
+  const missionId = missionSource === "library" && b.missionId ? String(b.missionId) : null;
+  const missionTemplate =
+    missionSource === "mod" ? normalizeMissionTemplateInput(b.missionTemplate) : "";
   return {
     name: String(b.name || ""),
     mods: Array.isArray(b.mods) ? (b.mods as string[]) : [],
     serverMods: Array.isArray(b.serverMods) ? (b.serverMods as string[]) : [],
-    missionId: b.missionId ? String(b.missionId) : null,
+    missionSource,
+    missionId,
+    missionTemplate,
     modlistId: b.modlistId ? String(b.modlistId) : null,
+    difficultyPresetId: b.difficultyPresetId ? String(b.difficultyPresetId) : null,
     serverCfgOverrides: overrides,
     basicCfgOverrides: (b.basicCfgOverrides as Record<string, unknown>) || {},
     extraArgs: Array.isArray(b.extraArgs) ? (b.extraArgs as string[]) : [],
@@ -184,7 +220,9 @@ export function restoreProfileFromRevision(
   const s = rev.snapshot;
   getDb()
     .prepare(
-      `UPDATE mission_profiles SET name=?, version=version+1, mods=?, server_mods=?, mission_id=?, modlist_id=?,
+      `UPDATE mission_profiles SET name=?, version=version+1, mods=?, server_mods=?, mission_id=?,
+       mission_source=?, mission_template=?, modlist_id=?,
+       difficulty_preset_id=?,
        server_cfg_overrides=?, basic_cfg_overrides=?, extra_args=?, custom_difficulty=?, dlcs=?,
        recommended_headless_count=?,
        resolved_client_mods='[]', resolved_server_mods='[]', resolved_mods_at=NULL, resolved_mods_hash='',
@@ -195,7 +233,10 @@ export function restoreProfileFromRevision(
       JSON.stringify(s.mods || []),
       JSON.stringify(s.serverMods || []),
       s.missionId || null,
+      s.missionSource || "library",
+      s.missionTemplate || "",
       s.modlistId || null,
+      s.difficultyPresetId || null,
       JSON.stringify(s.serverCfgOverrides || {}),
       JSON.stringify(s.basicCfgOverrides || {}),
       JSON.stringify(s.extraArgs || []),
@@ -345,6 +386,129 @@ export function getOrCreateSharedSettings(): {
     version: Number(row.version) || 1,
     serverCfg: jsonParse<Record<string, unknown>>(String(row.server_cfg || "{}"), {}),
   };
+}
+
+export function recordDifficultyPresetRevision(
+  presetId: string,
+  version: number,
+  snapshot: DifficultyPresetSnapshot,
+  actor?: RevisionActor,
+  note = "",
+): void {
+  const { actorId, actorEmail } = actorFields(actor);
+  getDb()
+    .prepare(
+      `INSERT OR REPLACE INTO difficulty_preset_revisions(id, preset_id, version, snapshot, actor_id, actor_email, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+    )
+    .run(uuid(), presetId, version, JSON.stringify(snapshot || {}), actorId, actorEmail, note || "");
+  pruneDifficultyPresetRevisions(presetId);
+}
+
+function pruneDifficultyPresetRevisions(presetId: string): void {
+  getDb()
+    .prepare(
+      `DELETE FROM difficulty_preset_revisions
+       WHERE preset_id = ?
+         AND id NOT IN (
+           SELECT id FROM (
+             SELECT id FROM difficulty_preset_revisions
+             WHERE preset_id = ?
+             ORDER BY version DESC
+             LIMIT ?
+           )
+         )`,
+    )
+    .run(presetId, presetId, REVISION_KEEP);
+}
+
+export function ensureDifficultyPresetRevisionBaseline(presetId: string): void {
+  const db = getDb();
+  const n = db.prepare("SELECT COUNT(*) AS c FROM difficulty_preset_revisions WHERE preset_id = ?").get(presetId) as {
+    c: number;
+  };
+  if (Number(n?.c) > 0) return;
+  const row = db.prepare("SELECT name, difficulty, version FROM difficulty_presets WHERE id = ?").get(presetId) as
+    | { name: string; difficulty: string; version: number }
+    | undefined;
+  if (!row) return;
+  recordDifficultyPresetRevision(
+    presetId,
+    Number(row.version) || 1,
+    {
+      name: String(row.name || ""),
+      difficulty: normalizeCustomDifficulty(jsonParse(String(row.difficulty || "{}"), {})),
+    },
+    { email: "" },
+    "Baseline",
+  );
+}
+
+export function listDifficultyPresetRevisions(presetId: string): RevisionMeta[] {
+  ensureDifficultyPresetRevisionBaseline(presetId);
+  const rows = getDb()
+    .prepare(
+      `SELECT id, version, actor_id, actor_email, note, created_at
+       FROM difficulty_preset_revisions
+       WHERE preset_id = ?
+       ORDER BY version DESC`,
+    )
+    .all(presetId) as Record<string, unknown>[];
+  return rows.map(revisionMetaDto);
+}
+
+export function getDifficultyPresetRevision(
+  presetId: string,
+  version: number,
+): RevisionDetail<DifficultyPresetSnapshot> | null {
+  ensureDifficultyPresetRevisionBaseline(presetId);
+  const row = getDb()
+    .prepare(
+      `SELECT id, version, snapshot, actor_id, actor_email, note, created_at
+       FROM difficulty_preset_revisions
+       WHERE preset_id = ? AND version = ?`,
+    )
+    .get(presetId, version) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const snap = jsonParse<DifficultyPresetSnapshot>(String(row.snapshot), {
+    name: "",
+    difficulty: normalizeCustomDifficulty({}),
+  });
+  return {
+    ...revisionMetaDto(row),
+    snapshot: {
+      name: String(snap.name || ""),
+      difficulty: normalizeCustomDifficulty(snap.difficulty),
+    },
+  };
+}
+
+export function restoreDifficultyPresetFromRevision(
+  presetId: string,
+  version: number,
+  actor?: RevisionActor,
+): { newVersion: number; snapshot: DifficultyPresetSnapshot } | { error: string } {
+  const rev = getDifficultyPresetRevision(presetId, version);
+  if (!rev) return { error: "revision not found" };
+  const row = getDb().prepare("SELECT id FROM difficulty_presets WHERE id = ?").get(presetId);
+  if (!row) return { error: "preset not found" };
+
+  const snap = {
+    name: String(rev.snapshot.name || "Custom"),
+    difficulty: normalizeCustomDifficulty(rev.snapshot.difficulty),
+  };
+  getDb()
+    .prepare(
+      `UPDATE difficulty_presets SET name=?, difficulty=?, version=version+1, updated_at=datetime('now') WHERE id=?`,
+    )
+    .run(snap.name, JSON.stringify(snap.difficulty), presetId);
+
+  const updated = getDb().prepare("SELECT version FROM difficulty_presets WHERE id = ?").get(presetId) as {
+    version: number;
+  };
+  const newVersion = Number(updated.version);
+  recordDifficultyPresetRevision(presetId, newVersion, snap, actor, `Restored from v${version}`);
+  return { newVersion, snapshot: snap };
 }
 
 /** Shared settings merged under every profile apply (instance links ignored). */

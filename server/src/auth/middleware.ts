@@ -10,8 +10,6 @@ export type UserRow = {
   email: string;
   display_name: string;
   password_hash: string;
-  mfa_secret: string;
-  mfa_enabled: number;
   disabled: number;
   approved: number;
 };
@@ -21,7 +19,6 @@ export type SessionRow = {
   user_id: string;
   csrf_token: string;
   expires_at: string;
-  mfa_pending: number;
 };
 
 export type AuthedRequest = Request & {
@@ -31,13 +28,23 @@ export type AuthedRequest = Request & {
 };
 
 export function publicUser(u: UserRow) {
+  const identities = getDb()
+    .prepare(
+      `SELECT provider, subject, email, display_name AS displayName FROM user_identities WHERE user_id = ? ORDER BY provider`,
+    )
+    .all(u.id) as { provider: string; subject: string; email: string; displayName: string }[];
   return {
     id: u.id,
     email: u.email,
     displayName: u.display_name,
-    mfaEnabled: !!u.mfa_enabled,
     disabled: !!u.disabled,
     approved: !!u.approved,
+    identities: identities.map((i) => ({
+      provider: i.provider,
+      subject: i.subject,
+      email: i.email || undefined,
+      displayName: i.displayName || undefined,
+    })),
   };
 }
 
@@ -69,7 +76,6 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
   if (Number.isFinite(expires) && expires < Date.now()) {
     return res.status(401).json({ error: "session expired" });
   }
-  if (sess.mfa_pending) return res.status(401).json({ error: "mfa required" });
 
   const user = db.prepare("SELECT * FROM users WHERE id = ?").get(sess.user_id) as UserRow | undefined;
   if (!user || user.disabled) return res.status(401).json({ error: "unauthorized" });

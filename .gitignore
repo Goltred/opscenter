@@ -23,6 +23,7 @@ deploy/pki/*.key
 data/
 quarantine/
 deploy/missions/
+deploy/keys/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
