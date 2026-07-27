@@ -4,7 +4,12 @@ import { api, Host, Mod } from "../api";
 import { useAuth } from "../auth";
 import { parseWorkshopId } from "../workshopId";
 import { linkifyText } from "./linkify";
+import { useToast } from "./Toast";
 import { useList } from "./ui";
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 import { formatTimeWithSeconds } from "../formatTime";
 import { useModNameMap } from "../useModNameMap";
 
@@ -56,6 +61,7 @@ export function HostSteamCmdPanel({
   followOnly?: boolean;
 }) {
   const { can } = useAuth();
+  const toast = useToast();
   const modNames = useModNameMap();
   const mods = useList<Mod[]>(() => api.get("/mods"));
   const accounts = useList<SteamAccount[]>(() => api.get("/steam-accounts"));
@@ -181,18 +187,18 @@ export function HostSteamCmdPanel({
   async function startDownload() {
     const workshopId = parseWorkshopId(workshopInput);
     if (!workshopId) {
-      alert("Enter a workshop ID or paste a Steam workshop link");
+      toast.error("No workshop item", { message: "Enter a workshop ID or paste a Steam workshop link" });
       return;
     }
     if (!steamAccountId) {
-      alert("Add a Steam account under Admin → Steam first");
+      toast.error("No Steam account", { message: "Add a Steam account under Admin → Steam first" });
       return;
     }
     try {
       await downloadModById(workshopId);
       setWorkshopInput("");
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Download failed", { message: errorMessage(e) });
     }
   }
 
@@ -227,8 +233,8 @@ export function HostSteamCmdPanel({
       setBatchDownloading(true);
       await downloadModById(workshopId);
       await refreshPresence();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Download failed", { message: errorMessage(e) });
     } finally {
       setBatchDownloading(false);
     }
@@ -245,8 +251,8 @@ export function HostSteamCmdPanel({
         await downloadModById(id);
       }
       await refreshPresence();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Batch download failed", { message: errorMessage(e) });
     } finally {
       setBatchDownloading(false);
     }
@@ -254,7 +260,7 @@ export function HostSteamCmdPanel({
 
   async function runServerUpdate(opts: { beta?: string; validate?: boolean; label: string }) {
     if (!steamAccountId) {
-      alert("Add a Steam account under Admin → Steam first");
+      toast.error("No Steam account", { message: "Add a Steam account under Admin → Steam first" });
       return;
     }
     if (
@@ -273,8 +279,8 @@ export function HostSteamCmdPanel({
       });
       setStatus({ running: true, online: true, workshopId: "233780", jobId: r.jobId });
       appendJobMarker(`${opts.label} · ${r.jobId}`);
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Update failed", { message: errorMessage(e) });
     }
   }
 
@@ -283,8 +289,8 @@ export function HostSteamCmdPanel({
       await api.post("/steamcmd/cancel", { hostId: host.id, jobId: status.jobId });
       const s = await api.get<SteamStatus>(`/steamcmd/status?hostId=${encodeURIComponent(host.id)}`);
       setStatus(s);
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Cancel failed", { message: errorMessage(e) });
     }
   }
 

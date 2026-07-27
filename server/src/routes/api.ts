@@ -27,6 +27,7 @@ import {
 } from "../steam/workshop.js";
 import { resolveSteamAccount, steamCredsPayload } from "../steam/accounts.js";
 import { agentPackageAvailable, buildAgentJson, streamAgentPackageZip } from "../agentPackage.js";
+import { buildSetupStatus, dismissSetup, agentGatewayUrl } from "../setup.js";
 import { encryptSecret } from "../secrets.js";
 import { normalizeDlcCodes } from "../arma/dlcs.js";
 import {
@@ -115,19 +116,7 @@ function audit(req: AuthedRequest, action: string, targetId = "", result = "ok")
 }
 
 function agentControlPlaneUrl(): string {
-  const agentPort = (() => {
-    const addr = config.agentAddr || ":8443";
-    if (addr.startsWith(":")) return Number(addr.slice(1)) || 8443;
-    const i = addr.lastIndexOf(":");
-    return i >= 0 ? Number(addr.slice(i + 1)) || 8443 : 8443;
-  })();
-  let hostPart = "127.0.0.1";
-  try {
-    hostPart = new URL(config.publicUrl).hostname || "127.0.0.1";
-  } catch {
-    /* keep localhost */
-  }
-  return `ws://${hostPart}:${agentPort}/agent/connect`;
+  return agentGatewayUrl();
 }
 
 // ---- hosts ----
@@ -308,6 +297,17 @@ apiRouter.post("/hosts/:id/agent-package", requirePerm("host.add"), async (req: 
 apiRouter.get("/agent-package/status", requirePerm("host.add"), (_req, res) => {
   const pkg = agentPackageAvailable();
   res.json({ packageAvailable: pkg.ok, packageMessage: pkg.message || null });
+});
+
+/** Panel first-run setup progress (owners / host admins). */
+apiRouter.get("/setup/status", requirePerm("host.add"), (_req, res) => {
+  res.json(buildSetupStatus());
+});
+
+apiRouter.post("/setup/dismiss", requirePerm("host.add"), (req: AuthedRequest, res) => {
+  dismissSetup(req.user!.id);
+  audit(req, "setup.dismiss", "panel", "ok");
+  res.json({ status: "ok", ...buildSetupStatus() });
 });
 
 apiRouter.post("/hosts/:id/prepare", requirePerm("host.add"), async (req: AuthedRequest, res) => {
@@ -4078,18 +4078,6 @@ apiRouter.post("/schedules/:id/finish", async (req: AuthedRequest, res) => {
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : "finish failed" });
   }
-});
-
-/** @deprecated use /confirm — kept for older UI */
-apiRouter.post("/schedules/:id/approve", (req: AuthedRequest, res) => {
-  if (!canConfirmSchedule(req.grants)) return res.status(403).json({ error: "forbidden" });
-  const result = confirmSchedule(req.params.id, {
-    label: req.user?.email || "panel",
-    source: "panel",
-    userId: req.user?.id || null,
-  });
-  if (!result.ok) return res.status(400).json({ error: result.error });
-  res.json({ status: "ok" });
 });
 
 // ---- admin ----

@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
 import { api, AuditEntry, Host, Instance, Role, User, UserRole } from "../api";
 import { useAuth } from "../auth";
+import { useToast } from "../components/Toast";
 import { Modal, useList } from "../components/ui";
 import { formatDateTime } from "../formatTime";
 
 const tabs = ["Users", "Roles", "Steam", "Discord", "Audit"] as const;
 type Tab = (typeof tabs)[number];
+
+type SteamAccountRow = { id: string; label: string; username: string; guardCached?: boolean };
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 export function Admin() {
   const [tab, setTab] = useState<Tab>("Users");
@@ -25,6 +32,7 @@ export function Admin() {
 }
 
 function Users() {
+  const toast = useToast();
   const users = useList<User[]>(() => api.get("/users"));
   const [managing, setManaging] = useState<User | null>(null);
 
@@ -38,8 +46,8 @@ function Users() {
     try {
       await api.del(`/users/${u.id}`);
       users.reload();
-    } catch (e: any) {
-      alert(e.message || "Delete failed");
+    } catch (e: unknown) {
+      toast.error("Delete failed", { message: errorMessage(e) });
     }
   }
 
@@ -110,6 +118,7 @@ function Users() {
 }
 
 function ManageRoles({ user, onClose }: { user: User; onClose: () => void }) {
+  const toast = useToast();
   const assignments = useList<UserRole[]>(() => api.get(`/users/${user.id}/roles`), [user.id]);
   const roles = useList<Role[]>(() => api.get("/roles"));
   const hosts = useList<Host[]>(() => api.get("/hosts"));
@@ -121,7 +130,7 @@ function ManageRoles({ user, onClose }: { user: User; onClose: () => void }) {
   async function assign() {
     if (!roleId) return;
     try { await api.post(`/users/${user.id}/roles`, { roleId, scopeType, scopeId: scopeType === "global" ? "" : scopeId }); assignments.reload(); }
-    catch (e: any) { alert(e.message); }
+    catch (e: unknown) { toast.error("Assign role failed", { message: errorMessage(e) }); }
   }
   async function remove(a: UserRole) { await api.del(`/users/${user.id}/roles/${a.id}`); assignments.reload(); }
 
@@ -153,6 +162,7 @@ function ManageRoles({ user, onClose }: { user: User; onClose: () => void }) {
 }
 
 function Roles() {
+  const toast = useToast();
   const roles = useList<Role[]>(() => api.get("/roles"));
   const perms = useList<string[]>(() => api.get("/permissions"));
   const [name, setName] = useState("");
@@ -160,7 +170,7 @@ function Roles() {
 
   async function create() {
     try { await api.post("/roles", { name, description: "", permissions: [] }); setName(""); roles.reload(); }
-    catch (e: any) { alert(e.message); }
+    catch (e: unknown) { toast.error("Create role failed", { message: errorMessage(e) }); }
   }
   async function del(r: Role) { if (!confirm("Delete role?")) return; await api.del(`/roles/${r.id}`); roles.reload(); }
 
@@ -191,9 +201,10 @@ function Roles() {
 }
 
 function EditPerms({ role, all, onClose, onSaved }: { role: Role; all: string[]; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast();
   const [sel, setSel] = useState<string[]>(role.permissions);
   function toggle(p: string) { setSel(sel.includes(p) ? sel.filter((x) => x !== p) : [...sel, p]); }
-  async function save() { try { await api.put(`/roles/${role.id}/permissions`, { permissions: sel }); onSaved(); } catch (e: any) { alert(e.message); } }
+  async function save() { try { await api.put(`/roles/${role.id}/permissions`, { permissions: sel }); onSaved(); } catch (e: unknown) { toast.error("Save failed", { message: errorMessage(e) }); } }
   return (
     <Modal title={`Permissions — ${role.name}`} onClose={onClose}>
       <div className="grid cols-2" style={{ gap: 6 }}>
@@ -209,13 +220,14 @@ function EditPerms({ role, all, onClose, onSaved }: { role: Role; all: string[];
 }
 
 function Steam() {
-  const accounts = useList<any[]>(() => api.get("/steam-accounts"));
+  const toast = useToast();
+  const accounts = useList<SteamAccountRow[]>(() => api.get("/steam-accounts"));
   const [label, setLabel] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   async function add() {
     try { await api.post("/steam-accounts", { label, username, password }); setLabel(""); setUsername(""); setPassword(""); accounts.reload(); }
-    catch (e: any) { alert(e.message); }
+    catch (e: unknown) { toast.error("Add account failed", { message: errorMessage(e) }); }
   }
   async function del(id: string) { await api.del(`/steam-accounts/${id}`); accounts.reload(); }
   return (
@@ -295,7 +307,7 @@ function Discord() {
   }
 
   useEffect(() => {
-    void reloadStatus().catch((e: any) => setError(e.message || "Failed to load Discord settings"));
+    void reloadStatus().catch((e: unknown) => setError(errorMessage(e) || "Failed to load Discord settings"));
   }, []);
 
   useEffect(() => {
@@ -312,8 +324,8 @@ function Discord() {
       .then((rows) => {
         if (!cancelled) setGuilds(Array.isArray(rows) ? rows : []);
       })
-      .catch((e: any) => {
-        if (!cancelled) setPickersError(e.message || "Could not list servers");
+      .catch((e: unknown) => {
+        if (!cancelled) setPickersError(errorMessage(e) || "Could not list servers");
       });
     return () => {
       cancelled = true;
@@ -336,8 +348,8 @@ function Discord() {
         setChannels(Array.isArray(ch) ? ch : []);
         setRoles(Array.isArray(ro) ? ro : []);
       })
-      .catch((e: any) => {
-        if (!cancelled) setPickersError(e.message || "Could not list channels/roles");
+      .catch((e: unknown) => {
+        if (!cancelled) setPickersError(errorMessage(e) || "Could not list channels/roles");
       });
     return () => {
       cancelled = true;
@@ -367,8 +379,8 @@ function Discord() {
       } else {
         setMessage("Saved. Discord integration is off.");
       }
-    } catch (e: any) {
-      setError(e.message || "Save failed");
+    } catch (e: unknown) {
+      setError(errorMessage(e) || "Save failed");
     } finally {
       setSaving(false);
     }
@@ -571,7 +583,7 @@ function Discord() {
             type="button"
             className="btn"
             disabled={saving}
-            onClick={() => void reloadStatus().catch((e: any) => setError(e.message))}
+            onClick={() => void reloadStatus().catch((e: unknown) => setError(errorMessage(e)))}
           >
             Refresh status
           </button>

@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError, Host } from "../api";
 import { useAuth } from "../auth";
+import { useToast } from "./Toast";
 import { Modal } from "./ui";
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 type SetupInfo = {
   hostId: string;
@@ -73,6 +78,7 @@ export function AgentSetupWizard({
   onHostChanged?: (host?: Host) => void;
 }) {
   const { can } = useAuth();
+  const toast = useToast();
   const isCreate = !initialHost;
   const [activeHost, setActiveHost] = useState<Host | null>(initialHost);
   const [step, setStep] = useState<StepId>("host");
@@ -245,14 +251,14 @@ export function AgentSetupWizard({
   async function goNext() {
     if (step === "host") {
       if (!hostFieldsOk) {
-        alert("Name, Arma root, and SteamCMD path are required");
+        toast.error("Missing host settings", { message: "Name, Arma root, and SteamCMD path are required" });
         return;
       }
       setHostSaving(true);
       try {
         await ensureHostSaved();
-      } catch (e: any) {
-        alert(e.message);
+      } catch (e: unknown) {
+        toast.error("Save host failed", { message: errorMessage(e) });
         setHostSaving(false);
         return;
       }
@@ -265,15 +271,15 @@ export function AgentSetupWizard({
     const targetIndex = STEPS.findIndex((s) => s.id === id);
     if (targetIndex > 0 && !activeHost) {
       if (!hostFieldsOk) {
-        alert("Fill host settings first (name, Arma root, SteamCMD path).");
+        toast.error("Missing host settings", { message: "Fill host settings first (name, Arma root, SteamCMD path)." });
         setStep("host");
         return;
       }
       setHostSaving(true);
       try {
         await ensureHostSaved();
-      } catch (e: any) {
-        alert(e.message);
+      } catch (e: unknown) {
+        toast.error("Save host failed", { message: errorMessage(e) });
         setHostSaving(false);
         return;
       }
@@ -284,7 +290,7 @@ export function AgentSetupWizard({
 
   async function addSteamAccount() {
     if (!steamLabel.trim() || !steamUser.trim() || !steamPass) {
-      alert("Label, username, and password are required");
+      toast.error("Missing details", { message: "Label, username, and password are required" });
       return;
     }
     setSteamBusy(true);
@@ -301,8 +307,8 @@ export function AgentSetupWizard({
       await loadSteam();
       if (created?.id) setSteamAccountId(created.id);
       if (activeHost) await loadSetup(activeHost.id);
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Add account failed", { message: errorMessage(e) });
     } finally {
       setSteamBusy(false);
     }
@@ -310,7 +316,7 @@ export function AgentSetupWizard({
 
   async function downloadPackage() {
     if (!hostFieldsOk) {
-      alert("Fill host settings first (name, Arma root, SteamCMD path).");
+      toast.error("Missing host settings", { message: "Fill host settings first (name, Arma root, SteamCMD path)." });
       setStep("host");
       return;
     }
@@ -323,8 +329,8 @@ export function AgentSetupWizard({
       triggerBlobDownload(blob, filename || `a3panel-agent-${name}.zip`);
       setDownloaded(true);
       await loadSetup(host.id);
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Download failed", { message: errorMessage(e) });
     } finally {
       setDownloading(false);
     }

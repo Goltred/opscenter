@@ -27,9 +27,6 @@ export const config = {
   webDir: env("A3P_WEB_DIR", path.join(repoRoot, "web", "dist")),
   databaseUrl: env("A3P_DATABASE_URL", path.join(repoRoot, "deploy", "a3panel.sqlite")),
   sessionTtlHours: envInt("A3P_SESSION_TTL_HOURS", 12),
-  /** @deprecated password bootstrap removed — use A3P_BOOTSTRAP_OWNERS */
-  bootstrapAdminEmail: env("A3P_BOOTSTRAP_ADMIN_EMAIL", "admin@a3panel.local"),
-  bootstrapAdminPassword: env("A3P_BOOTSTRAP_ADMIN_PASSWORD", ""),
   /** Comma-separated provider:subject — e.g. discord:123,steam:7656… */
   bootstrapOwners: env("A3P_BOOTSTRAP_OWNERS", ""),
   agentAddr: env("A3P_AGENT_ADDR", ":8443"),

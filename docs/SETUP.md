@@ -1,5 +1,9 @@
 # A3Panel Setup Guide
 
+**Installing the panel for the first time?** Start with **[INSTALL.md](INSTALL.md)** (one-click script or manual steps, OAuth, agent binary, setup wizard).
+
+This guide covers **day-to-day operations** after the panel is running.
+
 A3Panel has three deployable pieces:
 
 1. **Control plane** (`server/`) — Node.js API + agent gateway + optional static SPA.
@@ -25,16 +29,13 @@ SQLite is embedded. Set `A3P_DATABASE_URL` (default `deploy/a3panel.sqlite`). Sc
 
 ## 2. Control plane + UI
 
+See **[INSTALL.md](INSTALL.md)** for install and first-run wizard. Quick start:
+
 ```powershell
 npm start
 ```
 
-Or:
-
-```powershell
-cd deploy
-.\run-server.ps1 -EnvFile .\control-plane.env
-```
+First-time Windows install: `.\deploy\install-panel.ps1`
 
 Env highlights:
 
@@ -53,28 +54,17 @@ Env highlights:
 ## 3. Host agent enrollment
 
 1. Dashboard → **Add host** opens the agent setup wizard (same wizard as **Agent setup** on an existing host).
-2. **Host settings** creates/saves the host (name, armaRoot, steamCmdPath, …), then continue: Steam → download package → install & run → Start.
-3. When connected, the host card shows **agent connected**. Start (or Dashboard Prepare) creates folders and can install the creatordlc dedicated server if missing.
+2. **Host settings** creates/saves the host (name, armaRoot, steamCmdPath, …), then continue: Steam → download package → install & run → Verify.
+3. When connected, the host card shows **agent connected**. Verify creates folders and can install the dedicated server if missing.
 
-Manual alternative (publish on the panel machine, copy binary yourself):
+The panel serves the agent zip from `agent-csharp/publish` (override with `A3P_AGENT_DIST_DIR`). Optional Windows service steps are in `README.txt` inside the zip.
+
+To rebuild the agent binary on the panel machine:
 
 ```powershell
 cd agent-csharp
 dotnet publish -c Release -o publish
 ```
-
-Or use `deploy\install-agent.ps1`:
-
-```powershell
-cd deploy
-.\install-agent.ps1 -Config ..\agent-csharp\agent.json -Build
-# optional Windows Service:
-.\install-agent.ps1 -Config ..\agent-csharp\agent.json -Build -Service
-```
-
-Panel zip downloads from `agent-csharp/publish` (override with `A3P_AGENT_DIST_DIR`).
-
-`controlPlaneUrl` example: `ws://PANEL_IP:8443/agent/connect` (use **`wss://`** in production).
 
 ## 4. Steam accounts / SteamCMD / instances
 

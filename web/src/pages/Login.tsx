@@ -41,7 +41,7 @@ export function Login() {
           <div className="muted" style={{ marginTop: 16 }}>Loading providers…</div>
         ) : providers.length === 0 ? (
           <div className="warn" style={{ marginTop: 16 }}>
-            No OAuth providers configured. Set client IDs/secrets in the control-plane env (see docs/SETUP.md).
+            No OAuth providers configured. Set client IDs/secrets in the control-plane env (see docs/INSTALL.md).
           </div>
         ) : (
           <div className="oauth-providers">

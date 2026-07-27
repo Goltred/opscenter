@@ -3,6 +3,7 @@ import { api, Instance, MissionProfile, Schedule } from "../api";
 import { useAuth } from "../auth";
 import { FinishScheduleModal, type FinishScheduleTarget } from "../components/FinishScheduleModal";
 import { StandDownScheduleModal, type StandDownScheduleTarget } from "../components/StandDownScheduleModal";
+import { useToast } from "../components/Toast";
 import { Modal, useList } from "../components/ui";
 import { formatDateTime } from "../formatTime";
 import { formatScheduleState } from "../formatScheduleState";
@@ -243,6 +244,7 @@ function ScheduleForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const toast = useToast();
   const instances = useList<Instance[]>(() => api.get("/instances"));
   const profiles = useList<MissionProfile[]>(() => api.get("/profiles"));
   const [instanceId, setInstanceId] = useState(schedule?.instanceId || "");
@@ -262,11 +264,11 @@ function ScheduleForm({
 
   async function save() {
     if (!profileId || !runAt || !instanceId) {
-      alert("Instance, profile and run time required");
+      toast.error("Missing details", { message: "Instance, profile and run time are required" });
       return;
     }
     if (fallbackProfileId && fallbackProfileId === profileId) {
-      alert("Fallback profile must differ from the operation profile");
+      toast.error("Invalid fallback", { message: "Fallback profile must differ from the operation profile" });
       return;
     }
     setSaving(true);
@@ -288,8 +290,8 @@ function ScheduleForm({
         await api.post("/schedules", body);
       }
       onSaved();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Save schedule failed", { message: e instanceof Error ? e.message : String(e) });
     } finally {
       setSaving(false);
     }

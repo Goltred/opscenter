@@ -1,13 +1,19 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, HcGroup, Host, Instance } from "../api";
+import { SetupStatus } from "../components/PanelSetupWizard";
 import { useAuth } from "../auth";
 import { AgentSetupWizard } from "../components/AgentSetupWizard";
 import { AddHcGroupModal, HcGroupCard } from "../components/HcGroupCard";
 import { HostFilesModal } from "../components/HostFilesModal";
 import { HostSteamCmdPanel } from "../components/HostSteamCmdPanel";
+import { useToast } from "../components/Toast";
 import { Modal, StatusBadge, useList } from "../components/ui";
 import { formatDateTime } from "../formatTime";
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 function formatLastSeen(iso?: string) {
   if (!iso) return "never";
@@ -21,6 +27,7 @@ function formatLastSeen(iso?: string) {
 
 export function Dashboard() {
   const { can } = useAuth();
+  const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const hosts = useList<Host[]>(() => api.get("/hosts"));
   const instances = useList<Instance[]>(() => api.get("/instances"));
@@ -37,6 +44,15 @@ export function Dashboard() {
   const [busy, setBusy] = useState("");
   const [moreHostId, setMoreHostId] = useState<string | null>(null);
   const [addHcHostId, setAddHcHostId] = useState<string | null>(null);
+  const [panelSetup, setPanelSetup] = useState<SetupStatus | null>(null);
+
+  useEffect(() => {
+    if (!can("host.add")) return;
+    api
+      .get<SetupStatus>("/setup/status")
+      .then(setPanelSetup)
+      .catch(() => setPanelSetup(null));
+  }, [can, hosts.data]);
 
   useEffect(() => {
     const hostId = searchParams.get("hostId");
@@ -115,8 +131,8 @@ export function Dashboard() {
     try {
       await api.post(`/instances/${inst.id}/${action}`);
       setTimeout(() => instances.reload(), 800);
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error(`Instance ${action} failed`, { message: errorMessage(e) });
     } finally {
       setBusy("");
     }
@@ -128,8 +144,8 @@ export function Dashboard() {
     try {
       await api.del(`/instances/${inst.id}`);
       instances.reload();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Delete instance failed", { message: errorMessage(e) });
     } finally {
       setBusy("");
     }
@@ -142,8 +158,8 @@ export function Dashboard() {
       await api.del(`/hosts/${h.id}`);
       hosts.reload();
       instances.reload();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Delete host failed", { message: errorMessage(e) });
     } finally {
       setBusy("");
     }
@@ -162,6 +178,14 @@ export function Dashboard() {
           </button>
         )}
       </div>
+
+      {panelSetup && !panelSetup.complete && (
+        <div className="warn-banner" style={{ marginBottom: 16 }}>
+          Panel setup is not finished.{" "}
+          <Link to="/setup">Resume setup wizard</Link>
+          {" "}— connect a host, save Steam credentials, and confirm the agent package.
+        </div>
+      )}
 
       {hosts.error && <div className="error">{hosts.error}</div>}
       <div className="grid" style={{ gap: 16 }}>
@@ -468,6 +492,7 @@ export function Dashboard() {
 }
 
 function AddInstance({ hostId, onAdded }: { hostId: string; onAdded: () => void }) {
+  const toast = useToast();
   const [name, setName] = useState("");
   const [port, setPort] = useState(2302);
   async function add() {
@@ -476,7 +501,7 @@ function AddInstance({ hostId, onAdded }: { hostId: string; onAdded: () => void 
       await api.post("/instances", { hostId, name, port });
       setName("");
       onAdded();
-    } catch (e: any) { alert(e.message); }
+    } catch (e: unknown) { toast.error("Add instance failed", { message: errorMessage(e) }); }
   }
   return (
     <div className="row" style={{ marginTop: 10 }}>
@@ -488,6 +513,7 @@ function AddInstance({ hostId, onAdded }: { hostId: string; onAdded: () => void 
 }
 
 function EditHostModal({ host, onClose, onSaved }: { host: Host; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast();
   const [name, setName] = useState(host.name);
   const [armaRoot, setArmaRoot] = useState(host.armaRoot);
   const [modsLibraryPath, setModsLibraryPath] = useState(host.modsLibraryPath || "");
@@ -499,8 +525,8 @@ function EditHostModal({ host, onClose, onSaved }: { host: Host; onClose: () => 
     try {
       await api.patch(`/hosts/${host.id}`, { name, armaRoot, modsLibraryPath, advertiseHost });
       onSaved();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Save host failed", { message: errorMessage(e) });
     } finally {
       setSaving(false);
     }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, HcGroup } from "../api";
+import { useToast } from "./Toast";
 
 function rollupBadge(state: string): string {
   const s = state.toLowerCase();
@@ -147,6 +148,7 @@ export function AddHcGroupModal({
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const toast = useToast();
   const [name, setName] = useState("HC group");
   const [count, setCount] = useState(2);
   const [targetInstanceId, setTargetInstanceId] = useState(instances[0]?.id || "");
@@ -169,8 +171,8 @@ export function AddHcGroupModal({
         // Optionally start — leave to user Start button to avoid surprise
       }
       onClose();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Create HC group failed", { message: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
     }

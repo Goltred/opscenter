@@ -49,7 +49,11 @@ async function main() {
   app.listen(port, () => {
     console.log(`A3Panel (Node) listening on http://localhost:${port}`);
     console.log(`devMode=${config.devMode} db=${config.databaseUrl}`);
-    console.log(`login: ${config.bootstrapAdminEmail} / (bootstrap password)`);
+    console.log(
+      config.bootstrapOwners
+        ? `sign in via OAuth; bootstrap owners: ${config.bootstrapOwners}`
+        : "sign in via OAuth; set A3P_BOOTSTRAP_OWNERS to seed the first Owner",
+    );
   });
 
   startAgentGateway(parseAgentPort(config.agentAddr));

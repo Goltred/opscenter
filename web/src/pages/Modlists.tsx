@@ -2,7 +2,12 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api, Modlist, ModlistEntry, setCsrf } from "../api";
 import { useAuth } from "../auth";
+import { useToast } from "../components/Toast";
 import { Modal, useList } from "../components/ui";
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 async function importModlistFile(file: File) {
   // Refresh CSRF from /auth/me then POST multipart (same cookie session).
@@ -85,6 +90,7 @@ function WorkshopModRow({
 
 export function Modlists() {
   const { can } = useAuth();
+  const toast = useToast();
   const lists = useList<Modlist[]>(() => api.get("/modlists"));
   const [editing, setEditing] = useState<Modlist | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -94,10 +100,10 @@ export function Modlists() {
     setImporting(true);
     try {
       const data = await importModlistFile(file);
-      alert(`Imported ${data.entryCount} mods into "${data.name}"`);
+      toast.success("Modlist imported", { message: `Imported ${data.entryCount} mods into "${data.name}"` });
       lists.reload();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Import failed", { message: errorMessage(e) });
     } finally {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -174,6 +180,7 @@ export function Modlists() {
 type WorkshopMetaMap = Record<string, { title?: string; previewUrl?: string; workshopUrl?: string }>;
 
 function EditModlist({ list, onClose, onSaved }: { list: Modlist; onClose: () => void; onSaved: () => void }) {
+  const toast = useToast();
   const [name, setName] = useState(list.name);
   const [entries, setEntries] = useState<ModlistEntry[]>([...list.entries]);
   const [loadingMeta, setLoadingMeta] = useState(true);
@@ -218,8 +225,8 @@ function EditModlist({ list, onClose, onSaved }: { list: Modlist; onClose: () =>
         entries: entries.map(({ workshopId, name: n, kind }) => ({ workshopId, name: n, kind })),
       });
       onSaved();
-    } catch (e: any) {
-      alert(e.message);
+    } catch (e: unknown) {
+      toast.error("Save modlist failed", { message: errorMessage(e) });
     }
   }
 

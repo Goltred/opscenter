@@ -90,14 +90,6 @@ export async function uploadMissionFile(file: File) {
   return data;
 }
 
-/** @deprecated Use uploadMissionFile */
-export async function uploadFile(section: string, file: File) {
-  if (section !== "mission") {
-    throw new ApiError(400, "Only mission .pbo uploads are supported");
-  }
-  return uploadMissionFile(file);
-}
-
 /** Upload a .bikey into the panel signature-key library. */
 export async function uploadSignatureKey(file: File) {
   const fd = new FormData();

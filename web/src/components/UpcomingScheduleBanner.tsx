@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Schedule } from "../api";
 import { useAuth } from "../auth";
+import { useToast } from "./Toast";
 import { formatDateTimeWeekday } from "../formatTime";
 import { formatScheduleState } from "../formatScheduleState";
 import { FinishScheduleModal, type FinishScheduleTarget } from "./FinishScheduleModal";
@@ -143,6 +144,7 @@ export function UpcomingScheduleBanner({
   onReload: () => void;
 }) {
   const { can } = useAuth();
+  const toast = useToast();
   const [busyId, setBusyId] = useState("");
   const [finishTarget, setFinishTarget] = useState<FinishScheduleTarget | null>(null);
   const [standDownTarget, setStandDownTarget] = useState<StandDownScheduleTarget | null>(null);
@@ -152,8 +154,8 @@ export function UpcomingScheduleBanner({
     try {
       await api.post(`/schedules/${s.id}/confirm`);
       onReload();
-    } catch (e: any) {
-      alert(e.message || "Confirm failed");
+    } catch (e: unknown) {
+      toast.error("Confirm failed", { message: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusyId("");
     }

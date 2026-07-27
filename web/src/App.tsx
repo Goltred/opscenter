@@ -12,6 +12,7 @@ import { Missions } from "./pages/Missions";
 import { Profiles } from "./pages/Profiles";
 import { Schedules } from "./pages/Schedules";
 import { Admin } from "./pages/Admin";
+import { SetupPage, SetupRedirect } from "./pages/Setup";
 
 /** Old /files bookmarks → Dashboard browse modal. */
 function HostFilesRedirect() {
@@ -34,7 +35,9 @@ export function App() {
   if (!user.approved) return <PendingApproval />;
   return (
     <Layout>
+      <SetupRedirect />
       <Routes>
+        <Route path="/setup" element={<SetupPage />} />
         <Route path="/" element={<Dashboard />} />
         <Route path="/instances/:id" element={<InstancePage />} />
         <Route path="/files" element={<HostFilesRedirect />} />
