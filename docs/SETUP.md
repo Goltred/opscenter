@@ -50,7 +50,7 @@ Workflow: add entries under **Mods** (search or workshop ID) → on the host, op
 
 Steam account: **Admin → Steam** (encrypted on the panel; sent to the agent per job only). Workshop mods need an account that owns Arma 3; the dedicated server package does not. Prefer `wss://` outside a trusted LAN — see [SECURITY.md](SECURITY.md).
 
-Steam Web API key (same Admin → Steam page, or optional `OC_OAUTH_STEAM_API_KEY`): not a Steam login — improves workshop titles and required-item deps. Without it, modlists may show IDs/URLs instead of names.
+Steam Web API key (Admin → Steam): not a Steam login — improves workshop titles and required-item deps. Without it, modlists may show IDs/URLs instead of names.
 
 Shared mods folder (Edit host): read-only library the agent never writes into. Missing mods download into the host’s local workshop tree under Arma root.
 
@@ -63,7 +63,7 @@ Shared mods folder (Edit host): read-only library the agent never writes into. M
 - **Mission Profiles** — difficulty, Creator DLC checkboxes, workshop mods, mission, optional recommended local HC count.
   - **Apply** on an instance expands Workshop required items when needed and writes server.cfg / keys.
   - Start/restart reuse a persisted resolved mod list when present; optional **Refresh Steam Workshop dependencies** on apply.
-  - Better dependency lookups: Admin → Steam → **Steam Web API key**, or `OC_OAUTH_STEAM_API_KEY` in `control-plane.env`.
+  - Better dependency lookups: Admin → Steam → **Steam Web API key**.
   - Mod titles: Mods → **Refresh titles**.
 - **Shared server.cfg** (on Profiles) — passwords, admins, BattlEye, etc. for the selected instance; profile overrides win.
 - **Keys** — on apply/start, `.bikey` files from loaded workshop mods copy into `{armaRoot}\keys\`. Instance page: **Sync mod keys**. Extra keys: Mods → Signature keys → **Push signature keys** on the instance.
@@ -95,7 +95,7 @@ Optional Discord channel / requester IDs on a schedule work with **Admin → Dis
 
 - **Users** — approve pending OAuth accounts, disable, assign roles. First Owner comes from `OC_BOOTSTRAP_OWNERS` (INSTALL).
 - **Roles** — granular permissions (`host.add`, `instance.control`, `schedule.*`, …), optionally scoped to a host or instance.
-- **Sign-in** — OAuth providers live in the panel (encrypted). Toggle any configured provider on/off for the login page. Install seeds the first provider via `oauth-bootstrap.json`; env `OC_OAUTH_*` is an optional legacy fallback.
+- **Sign-in** — OAuth providers live in the panel (encrypted). Toggle any configured provider on/off for the login page. Install seeds the first provider via `oauth-bootstrap.json`.
 - **Steam** — login accounts for installs/downloads; optional Web API key for workshop titles/deps; Guard cache status after first successful Guard on the host.
 - **Discord** — optional bot for schedule reminders and slash commands (`/help` in Discord lists them). Configure token, guild, channels under Admin → Discord.
 - **Audit** — who did what in the panel.

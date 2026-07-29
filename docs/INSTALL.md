@@ -145,8 +145,6 @@ Then either:
 
 - Or start with no providers, sign in is impossible until you add credentials — prefer the bootstrap file or installer. After you are Owner, manage providers under **Admin → Sign-in**.
 
-Legacy `OC_OAUTH_*` env vars still work as a fallback.
-
 ### 3. Host agent package (required before adding hosts)
 
 The panel serves a zip download per host. The binary must exist on the **panel machine**:
@@ -226,7 +224,7 @@ Day-to-day operations (hosts, mods, profiles, headless) are in **[SETUP.md](SETU
 
 | Problem | Fix |
 |---------|-----|
-| No OAuth providers on login | Ensure `oauth-bootstrap.json` was imported, or add providers under Admin → Sign-in. Legacy `OC_OAUTH_*` in env still works (restart after env changes) |
+| No OAuth providers on login | Ensure `oauth-bootstrap.json` was imported, or add providers under Admin → Sign-in |
 | Stuck on pending approval | Add your `provider:subject` to `OC_BOOTSTRAP_OWNERS`, restart, sign in again. If nobody is Owner yet, only the env can unblock you. |
 | OAuth redirect mismatch | Callback URL in the provider app must exactly match `OC_PUBLIC_URL` + `/api/auth/oauth/{provider}/callback` |
 | Agent package unavailable | Run `dotnet publish` in `agent-csharp` (or supply `-AgentZip`) |
@@ -241,6 +239,7 @@ Day-to-day operations (hosts, mods, profiles, headless) are in **[SETUP.md](SETU
 |------|---------|
 | `deploy/install-opscenter.ps1` | One-click Windows installer |
 | `deploy/control-plane.env` | Panel configuration (create from `.example`) |
+| `deploy/oauth-bootstrap.json` | One-shot OAuth credentials (imported on first start, then renamed) |
 | `scripts/start.mjs` | Load env, build UI, start API+SPA (`npm start`) |
 | `agent-csharp/publish/` | Default folder for host agent binary |
 | `docs/INDEX.md` | Map of install vs setup vs security docs |

@@ -78,7 +78,7 @@ authRouter.get("/oauth/:provider/start", (req, res) => {
   setOAuthState(res, state);
 
   if (providerId === "steam") {
-    if (!steamEnabled()) return res.status(404).json({ error: "steam oauth not configured (set OC_OAUTH_STEAM=1)" });
+    if (!steamEnabled()) return res.status(404).json({ error: "steam oauth not configured (enable Steam under Admin → Sign-in)" });
     return res.redirect(buildSteamAuthorizeUrl(state));
   }
 

@@ -111,7 +111,7 @@ export function buildSetupStatus(): SetupStatus {
       detail:
         providerCount > 0
           ? `${providerCount} provider${providerCount === 1 ? "" : "s"} ready`
-          : "Add at least one OAuth provider in deploy/control-plane.env (see docs/INSTALL.md).",
+          : "No sign-in provider yet. Re-run the installer OAuth step, add deploy/oauth-bootstrap.json, or (after Owner exists) use Admin → Sign-in.",
     },
     {
       id: "owners",
@@ -143,10 +143,8 @@ export function buildSetupStatus(): SetupStatus {
       label: "Steam Web API key",
       status: steamApi.configured ? "pass" : "warn",
       detail: steamApi.configured
-        ? steamApi.source === "panel"
-          ? "Saved on the panel (Admin → Steam). Improves workshop titles and required-item deps."
-          : "Using OC_OAUTH_STEAM_API_KEY from the environment."
-        : "Optional but recommended. Without it, workshop dependency resolution is less reliable and modlist titles may stay as IDs or URLs. Add under Admin → Steam (or this setup step), or set OC_OAUTH_STEAM_API_KEY.",
+        ? "Saved on the panel (Admin → Steam). Improves workshop titles and required-item deps."
+        : "Optional but recommended. Without it, workshop dependency resolution is less reliable and modlist titles may stay as IDs or URLs. Add under Admin → Steam (or this setup step).",
     },
     {
       id: "host",

@@ -140,15 +140,11 @@ function Configure-EnvInteractive([string]$Path) {
     $bootstrapPath = Join-Path $PSScriptRoot "oauth-bootstrap.json"
     $bootstrapImported = Join-Path $PSScriptRoot "oauth-bootstrap.json.imported"
     $hasOAuth = (Test-Path $bootstrapPath) -or (Test-Path $bootstrapImported)
-    foreach ($k in @("OC_OAUTH_DISCORD_CLIENT_ID", "OC_OAUTH_GOOGLE_CLIENT_ID", "OC_OAUTH_MICROSOFT_CLIENT_ID")) {
-        if ($current[$k]) { $hasOAuth = $true; break }
-    }
-    if ($current["OC_OAUTH_STEAM"] -eq "1") { $hasOAuth = $true }
 
     if (-not $hasOAuth) {
         Write-Host ""
         Write-Host "First OAuth provider (panel sign-in)"
-        Write-Host "  Credentials go into the panel database on first start (not control-plane.env)."
+        Write-Host "  Credentials go into the panel database on first start."
         Write-Host "  Redirect URI: $publicUrl/api/auth/oauth/<provider>/callback"
         Write-Host "  1 = Discord  2 = Google  3 = Microsoft  4 = Skip (configure later in Admin → Sign-in)"
         $pick = Read-Host "Choose provider"
@@ -176,7 +172,8 @@ function Configure-EnvInteractive([string]$Path) {
                 }
             }
             default {
-                Write-Host "Skipping OAuth — after first Owner, add providers under Admin → Sign-in."
+                Write-Host "Skipping OAuth — you will not be able to sign in until a provider is configured."
+                Write-Host "  Add deploy/oauth-bootstrap.json and restart, or use Admin → Sign-in after an Owner exists."
             }
         }
         if ($bootstrap) {
@@ -184,7 +181,7 @@ function Configure-EnvInteractive([string]$Path) {
             Write-Host "Wrote $bootstrapPath (imported into the panel DB on first start, then renamed)."
         }
     } else {
-        Write-Host "OAuth provider already configured (bootstrap file or legacy env)."
+        Write-Host "OAuth provider already configured (bootstrap file present or previously imported)."
     }
 }
 
@@ -269,11 +266,13 @@ Write-Host ""
 Write-Host "Next steps:"
 Write-Host "  1. Start the panel (if not started below):  npm start"
 Write-Host "  2. Open http://localhost:8080"
-Write-Host "  3. Sign in with your OAuth provider (bootstrap Owner from OC_BOOTSTRAP_OWNERS)"
+Write-Host "  3. Sign in with your OAuth provider (Owner from OC_BOOTSTRAP_OWNERS; providers from panel / oauth-bootstrap)"
 Write-Host "  4. Complete the setup wizard - Steam account, then your first game host"
 Write-Host ""
 Write-Host "Manual reference: docs\INSTALL.md"
 Write-Host "Day-to-day guide:   docs\SETUP.md"
+Write-Host ""
+Write-Host "Note: manage extra sign-in providers under Admin → Sign-in (not control-plane.env)."
 Write-Host ""
 
 if ($NoStart) {

@@ -19,9 +19,7 @@ type OAuthProviderRow = {
   callbackUrl: string;
   clientId: string;
   tenant?: string;
-  source: "panel" | "env" | "mixed" | "none";
   hasPanelConfig: boolean;
-  hasEnvConfig: boolean;
 };
 
 function errorMessage(e: unknown): string {
@@ -315,9 +313,7 @@ function SignInProviders() {
   }, []);
 
   function sourceLabel(p: OAuthProviderRow): string {
-    if (p.source === "panel") return "Panel";
-    if (p.source === "env") return "Environment (legacy)";
-    if (p.source === "mixed") return "Panel + env";
+    if (p.configured || p.hasPanelConfig) return "Stored on panel";
     return "Not configured";
   }
 
@@ -369,13 +365,7 @@ function SignInProviders() {
   }
 
   async function clearPanel(p: OAuthProviderRow) {
-    if (
-      !confirm(
-        `Remove panel settings for ${p.label}? Legacy environment values still apply if set. Prefer keeping credentials in the panel.`,
-      )
-    ) {
-      return;
-    }
+    if (!confirm(`Remove ${p.label} from the panel? It will disappear from the login page.`)) return;
     setBusyId(p.id);
     try {
       const next = await api.put<OAuthProviderRow>(`/oauth/providers/${p.id}`, { clear: true });
@@ -384,7 +374,7 @@ function SignInProviders() {
         ...prev,
         [p.id]: { clientId: "", clientSecret: "", tenant: "common" },
       }));
-      toast.success(`${p.label} panel settings cleared`);
+      toast.success(`${p.label} removed`);
     } catch (e: unknown) {
       toast.error("Clear failed", { message: errorMessage(e) });
     } finally {
@@ -438,12 +428,11 @@ function SignInProviders() {
               </div>
               <p className="muted small" style={{ margin: "8px 0 0" }}>
                 {sourceLabel(p)}
-                {p.hasEnvConfig && !p.hasPanelConfig ? " — prefer Enable here so it lives in the panel." : ""}
               </p>
               {p.hasPanelConfig && (
                 <div className="row" style={{ gap: 8, marginTop: 12 }}>
                   <button className="btn small danger" disabled={busyId === p.id} onClick={() => clearPanel(p)}>
-                    Clear panel override
+                    Remove
                   </button>
                 </div>
               )}
@@ -484,9 +473,6 @@ function SignInProviders() {
             </div>
             <p className="muted small" style={{ margin: "8px 0 0" }}>
               {sourceLabel(p)}
-              {p.hasEnvConfig && !p.hasPanelConfig
-                ? " — save below to move credentials into the panel (recommended)."
-                : ""}
             </p>
             <div className="grid cols-2" style={{ gap: 10, marginTop: 12 }}>
               <div>
@@ -496,7 +482,7 @@ function SignInProviders() {
                   onChange={(e) =>
                     setDrafts((prev) => ({ ...prev, [p.id]: { ...d, clientId: e.target.value } }))
                   }
-                  placeholder={p.clientId && p.source === "env" ? "Using env — paste to store in panel" : "OAuth client ID"}
+                  placeholder="OAuth client ID"
                   autoComplete="off"
                 />
               </div>
@@ -532,7 +518,7 @@ function SignInProviders() {
               </button>
               {p.hasPanelConfig && (
                 <button className="btn small danger" disabled={busyId === p.id} onClick={() => clearPanel(p)}>
-                  Clear panel settings
+                  Remove
                 </button>
               )}
             </div>
@@ -553,9 +539,8 @@ function Steam() {
 
   type WebApiStatus = {
     configured: boolean;
-    source: "panel" | "env" | "none";
+    source: "panel" | "none";
     hasPanelKey: boolean;
-    hasEnvKey: boolean;
   };
   const [webApi, setWebApi] = useState<WebApiStatus | null>(null);
   const [webApiKey, setWebApiKey] = useState("");
@@ -591,7 +576,7 @@ function Steam() {
 
   async function saveWebApiKey() {
     if (!webApiKey.trim()) {
-      toast.error("Enter an API key", { message: "Or clear the panel key if you only want the env fallback." });
+      toast.error("Enter an API key");
       return;
     }
     setWebApiBusy(true);
@@ -613,14 +598,14 @@ function Steam() {
   }
 
   async function clearWebApiKey() {
-    if (!confirm("Remove the panel-saved Steam Web API key? Env OC_OAUTH_STEAM_API_KEY still applies if set.")) return;
+    if (!confirm("Remove the Steam Web API key from the panel?")) return;
     setWebApiBusy(true);
     try {
       const next = await api.put<WebApiStatus>("/steam/web-api-key", { clear: true });
       setWebApi(next);
       setWebApiKey("");
       notifySteamWebApiChanged();
-      toast.success("Panel API key cleared");
+      toast.success("Web API key cleared");
     } catch (e: unknown) {
       toast.error("Clear failed", { message: errorMessage(e) });
     } finally {
@@ -643,14 +628,12 @@ function Steam() {
         {webApi && !webApi.configured && (
           <div className="warn-banner" style={{ marginTop: 10 }}>
             No Web API key configured. Modlists may show IDs/URLs instead of names, and dependency expansion is less
-            reliable. You can also set <code>OC_OAUTH_STEAM_API_KEY</code> in the environment.
+            reliable.
           </div>
         )}
         {webApi?.configured && (
           <div className="ok-banner" style={{ marginTop: 10 }}>
-            Key active via {webApi.source === "panel" ? "Admin (panel)" : "environment (OC_OAUTH_STEAM_API_KEY)"}
-            {webApi.source === "panel" && webApi.hasEnvKey ? " · env also set (panel wins)" : ""}
-            .
+            Key saved on the panel.
           </div>
         )}
         {can("steam.config") && (
@@ -671,7 +654,7 @@ function Steam() {
               </button>
               {webApi?.hasPanelKey && (
                 <button type="button" className="btn" disabled={webApiBusy} onClick={() => void clearWebApiKey()}>
-                  Clear panel key
+                  Clear key
                 </button>
               )}
             </div>
@@ -903,7 +886,7 @@ function Discord() {
               </a>
             ) : (
               <span className="muted small">
-                Configure Discord under Admin → Sign-in (or <code>OC_OAUTH_DISCORD_CLIENT_ID</code>) for an invite link.
+                Configure Discord under Admin → Sign-in for an invite link.
               </span>
             )}
           </div>

@@ -1,6 +1,5 @@
 import { getDb, jsonParse } from "../db.js";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "../secrets.js";
-import { config } from "../config.js";
 import { resolveOAuth2 } from "../auth/oauthProviders.js";
 import type { ScheduleRow } from "../schedules/runner.js";
 
@@ -60,7 +59,7 @@ export function discordPublicConfig() {
     | undefined;
   const raw = jsonParse<Record<string, unknown>>(row?.value, {});
   const token = String(raw.token || "");
-  const oauthClientId = resolveOAuth2("discord")?.clientId || config.oauth.discord.clientId || "";
+  const oauthClientId = resolveOAuth2("discord")?.clientId || "";
   return {
     enabled: !!raw.enabled,
     guildId: String(raw.guildId || ""),

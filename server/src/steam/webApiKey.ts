@@ -1,11 +1,10 @@
 import { getDb, jsonParse } from "../db.js";
-import { config } from "../config.js";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "../secrets.js";
 
 const SETTINGS_KEY = "steam_web_api";
 
 type Stored = {
-  /** Encrypted or legacy plaintext API key. */
+  /** Encrypted (or rare plaintext from older saves). */
   apiKey?: string;
 };
 
@@ -38,46 +37,35 @@ function decryptStoredKey(raw: string): string {
   return raw;
 }
 
-/** Panel-saved key only (decrypted). Empty if unset / undecryptable. */
+/** Panel-saved key (decrypted). Empty if unset / undecryptable. */
 export function loadPanelSteamWebApiKey(): string {
   return decryptStoredKey(String(readStored().apiKey || "").trim());
 }
 
 /**
- * Effective Steam Web API key: Admin (panel) wins, else OC_OAUTH_STEAM_API_KEY.
+ * Steam Web API key from Admin → Steam (panel settings only).
  * Used for workshop deps / titles enrichment and Steam OAuth display names — not SteamCMD logins.
  */
 export function resolveSteamWebApiKey(): string {
-  const fromPanel = loadPanelSteamWebApiKey();
-  if (fromPanel) return fromPanel;
-  return String(config.oauth.steam.apiKey || "").trim();
+  return loadPanelSteamWebApiKey();
 }
 
 export type SteamWebApiKeyPublic = {
   configured: boolean;
-  /** Where the effective key comes from. */
-  source: "panel" | "env" | "none";
-  /** True when a panel-saved key exists (even if empty after decrypt failure). */
+  source: "panel" | "none";
   hasPanelKey: boolean;
-  /** Env fallback is present. */
-  hasEnvKey: boolean;
 };
 
 export function steamWebApiKeyPublic(): SteamWebApiKeyPublic {
   const panel = loadPanelSteamWebApiKey();
-  const envKey = String(config.oauth.steam.apiKey || "").trim();
   if (panel) {
-    return { configured: true, source: "panel", hasPanelKey: true, hasEnvKey: !!envKey };
-  }
-  if (envKey) {
-    return { configured: true, source: "env", hasPanelKey: false, hasEnvKey: true };
+    return { configured: true, source: "panel", hasPanelKey: true };
   }
   const rawPanel = String(readStored().apiKey || "").trim();
   return {
     configured: false,
     source: "none",
     hasPanelKey: !!rawPanel,
-    hasEnvKey: false,
   };
 }
 

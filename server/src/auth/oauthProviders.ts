@@ -11,19 +11,18 @@ export type OAuth2ProviderId = Exclude<OAuthProviderId, "steam">;
 
 type PanelOAuth2 = {
   clientId?: string;
-  /** Encrypted or legacy plaintext. */
+  /** Encrypted (or rare plaintext from older saves). */
   clientSecret?: string;
   /** Microsoft only. */
   tenant?: string;
   /**
-   * When false, hide from login even if credentials exist (panel or env).
+   * When false, hide from login even if credentials exist.
    * When true/undefined, show when credentials resolve.
    */
   enabled?: boolean;
 };
 
 type PanelSteam = {
-  /** When set, overrides env OC_OAUTH_STEAM / API-key enable. */
   enabled?: boolean;
 };
 
@@ -39,13 +38,12 @@ export type ResolvedOAuth2 = {
   clientId: string;
   clientSecret: string;
   tenant?: string;
-  source: "panel" | "env" | "mixed";
 };
 
 export type OAuthProviderPublic = {
   id: OAuthProviderId;
   label: string;
-  /** Credentials present (panel and/or env). */
+  /** Credentials present (or Steam toggle stored). */
   configured: boolean;
   /** Shown on the login page (configured + not toggled off). */
   enabled: boolean;
@@ -54,9 +52,7 @@ export type OAuthProviderPublic = {
   clientId: string;
   /** Microsoft tenant when applicable. */
   tenant?: string;
-  source: "panel" | "env" | "mixed" | "none";
   hasPanelConfig: boolean;
-  hasEnvConfig: boolean;
 };
 
 const LABELS: Record<OAuthProviderId, string> = {
@@ -98,56 +94,19 @@ function decryptStoredSecret(raw: string): string {
   return raw;
 }
 
-function envOAuth2(id: OAuth2ProviderId): { clientId: string; clientSecret: string; tenant?: string } {
-  if (id === "discord") {
-    return {
-      clientId: config.oauth.discord.clientId || "",
-      clientSecret: config.oauth.discord.clientSecret || "",
-    };
-  }
-  if (id === "google") {
-    return {
-      clientId: config.oauth.google.clientId || "",
-      clientSecret: config.oauth.google.clientSecret || "",
-    };
-  }
-  if (id === "microsoft") {
-    return {
-      clientId: config.oauth.microsoft.clientId || "",
-      clientSecret: config.oauth.microsoft.clientSecret || "",
-      tenant: config.oauth.microsoft.tenant || "common",
-    };
-  }
-  return {
-    clientId: config.oauth.epic.clientId || "",
-    clientSecret: config.oauth.epic.clientSecret || "",
-  };
-}
-
 function oauthCallbackUrl(provider: string): string {
   return `${config.publicUrl.replace(/\/$/, "")}/api/auth/oauth/${provider}/callback`;
 }
 
-/** Effective client id + secret for an OAuth2 provider (panel fields merge over env). */
+/** Panel-stored client id + secret for an OAuth2 provider. */
 export function resolveOAuth2(id: OAuth2ProviderId): ResolvedOAuth2 | null {
   const panel = readStore()[id];
-  const env = envOAuth2(id);
-  const panelId = String(panel?.clientId || "").trim();
-  const panelSecret = decryptStoredSecret(String(panel?.clientSecret || "").trim());
-  const clientId = panelId || env.clientId;
-  const clientSecret = panelSecret || env.clientSecret;
+  const clientId = String(panel?.clientId || "").trim();
+  const clientSecret = decryptStoredSecret(String(panel?.clientSecret || "").trim());
   if (!clientId || !clientSecret) return null;
-
-  let source: ResolvedOAuth2["source"] = "env";
-  const idFromPanel = !!panelId;
-  const secretFromPanel = !!panelSecret;
-  if (idFromPanel && secretFromPanel) source = "panel";
-  else if (idFromPanel || secretFromPanel) source = "mixed";
-  else source = "env";
-
   const tenantPanel = String(panel?.tenant || "").trim();
-  const tenant = id === "microsoft" ? tenantPanel || env.tenant || "common" : undefined;
-  return { clientId, clientSecret, tenant, source };
+  const tenant = id === "microsoft" ? tenantPanel || "common" : undefined;
+  return { clientId, clientSecret, tenant };
 }
 
 /** Login toggle: false hides provider; unset/true keeps it on when configured. */
@@ -159,13 +118,7 @@ export function isOAuth2LoginEnabled(id: OAuth2ProviderId): boolean {
 
 export function resolveSteamLoginEnabled(): boolean {
   const panel = readStore().steam;
-  if (typeof panel?.enabled === "boolean") return panel.enabled;
-  return !!config.oauth.steam.enabled;
-}
-
-function hasEnvOAuth2(id: OAuth2ProviderId): boolean {
-  const e = envOAuth2(id);
-  return !!(e.clientId && e.clientSecret);
+  return panel?.enabled === true;
 }
 
 function hasPanelOAuth2(id: OAuth2ProviderId): boolean {
@@ -185,26 +138,19 @@ export function oauthProvidersPublic(): OAuthProviderPublic[] {
     if (id === "steam") {
       const panel = readStore().steam;
       const hasPanel = typeof panel?.enabled === "boolean";
-      const hasEnv = !!config.oauth.steam.enabled;
       const enabled = resolveSteamLoginEnabled();
-      let source: OAuthProviderPublic["source"] = "none";
-      if (hasPanel) source = "panel";
-      else if (hasEnv) source = "env";
       return {
         id,
         label: LABELS.steam,
-        configured: hasPanel || hasEnv,
+        configured: hasPanel,
         enabled,
         callbackUrl: oauthCallbackUrl("steam"),
         clientId: "",
-        source: hasPanel || hasEnv ? source : "none",
         hasPanelConfig: hasPanel,
-        hasEnvConfig: hasEnv,
       };
     }
     const resolved = resolveOAuth2(id);
     const panel = hasPanelOAuth2(id);
-    const env = hasEnvOAuth2(id);
     const configured = !!resolved;
     const enabled = configured && isOAuth2LoginEnabled(id);
     return {
@@ -213,11 +159,9 @@ export function oauthProvidersPublic(): OAuthProviderPublic[] {
       configured,
       enabled,
       callbackUrl: oauthCallbackUrl(id),
-      clientId: resolved?.clientId || String(readStore()[id]?.clientId || envOAuth2(id).clientId || "").trim(),
-      tenant: id === "microsoft" ? resolved?.tenant || envOAuth2("microsoft").tenant : undefined,
-      source: resolved?.source || "none",
+      clientId: resolved?.clientId || String(readStore()[id]?.clientId || "").trim(),
+      tenant: id === "microsoft" ? resolved?.tenant || String(readStore().microsoft?.tenant || "").trim() || "common" : undefined,
       hasPanelConfig: panel,
-      hasEnvConfig: env,
     };
   });
 }
@@ -307,7 +251,6 @@ function defaultBootstrapPath(): string {
 
 /**
  * Import one-shot install credentials into encrypted panel settings, then rename the file.
- * Prefer this over leaving OC_OAUTH_* in control-plane.env.
  */
 export function importOAuthBootstrapFile(): void {
   const filePath = defaultBootstrapPath();

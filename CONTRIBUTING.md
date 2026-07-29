@@ -7,7 +7,7 @@ Updates with coding agents are encouraged, they will be reviewed by me personall
 
 1. Node.js **20+**
 2. .NET **8** SDK (to build the host agent)
-3. Copy `deploy/control-plane.env.example` → `deploy/control-plane.env` and configure OAuth + `OC_BOOTSTRAP_OWNERS` (see [docs/INSTALL.md](docs/INSTALL.md); doc map: [docs/INDEX.md](docs/INDEX.md))
+3. Copy `deploy/control-plane.env.example` → `deploy/control-plane.env`, set `OC_BOOTSTRAP_OWNERS`, and configure a sign-in provider via the installer / `oauth-bootstrap.json` or Admin → Sign-in (see [docs/INSTALL.md](docs/INSTALL.md); doc map: [docs/INDEX.md](docs/INDEX.md))
 
 ```powershell
 npm run install:all

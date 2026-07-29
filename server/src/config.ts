@@ -34,30 +34,6 @@ export const config = {
   secretsKeyFile: env("OC_SECRETS_KEY_FILE", ""),
   /** Folder with published opscenter-agent.exe (default: <repo>/agent-csharp/publish). */
   agentDistDir: env("OC_AGENT_DIST_DIR", path.join(repoRoot, "agent-csharp", "publish")),
-  oauth: {
-    discord: {
-      clientId: env("OC_OAUTH_DISCORD_CLIENT_ID"),
-      clientSecret: env("OC_OAUTH_DISCORD_CLIENT_SECRET"),
-    },
-    google: {
-      clientId: env("OC_OAUTH_GOOGLE_CLIENT_ID"),
-      clientSecret: env("OC_OAUTH_GOOGLE_CLIENT_SECRET"),
-    },
-    microsoft: {
-      clientId: env("OC_OAUTH_MICROSOFT_CLIENT_ID"),
-      clientSecret: env("OC_OAUTH_MICROSOFT_CLIENT_SECRET"),
-      tenant: env("OC_OAUTH_MICROSOFT_TENANT", "common"),
-    },
-    steam: {
-      /** When true (default if unset and STEAM path used) — set OC_OAUTH_STEAM=1 to enable */
-      enabled: envBool("OC_OAUTH_STEAM", false) || !!env("OC_OAUTH_STEAM_API_KEY"),
-      apiKey: env("OC_OAUTH_STEAM_API_KEY"),
-    },
-    epic: {
-      clientId: env("OC_OAUTH_EPIC_CLIENT_ID"),
-      clientSecret: env("OC_OAUTH_EPIC_CLIENT_SECRET"),
-    },
-  },
   repoRoot,
 };
 
