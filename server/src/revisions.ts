@@ -360,6 +360,12 @@ export function restoreSharedCfgFromRevision(
   return { newVersion, snapshot: rev.snapshot };
 }
 
+/** Default shared server.cfg keys for a fresh panel (before the admin edits Shared settings). */
+export const DEFAULT_SHARED_SERVER_CFG: Record<string, unknown> = {
+  autoSelectMission: 0,
+  persistent: 1,
+};
+
 /** The single global shared settings row (created on demand). */
 export function getOrCreateSharedSettings(): {
   id: string;
@@ -373,12 +379,13 @@ export function getOrCreateSharedSettings(): {
     | undefined;
   if (!row) {
     const id = uuid();
+    const seed = { ...DEFAULT_SHARED_SERVER_CFG };
     db.prepare(
       `INSERT INTO shared_cfg_presets(id, name, version, server_cfg, created_at, updated_at)
-       VALUES (?, 'Shared settings', 1, '{}', datetime('now'), datetime('now'))`,
-    ).run(id);
-    recordSharedCfgRevision(id, 1, {}, undefined, "Created");
-    row = { id, name: "Shared settings", version: 1, server_cfg: "{}" };
+       VALUES (?, 'Shared settings', 1, ?, datetime('now'), datetime('now'))`,
+    ).run(id, JSON.stringify(seed));
+    recordSharedCfgRevision(id, 1, seed, undefined, "Created");
+    row = { id, name: "Shared settings", version: 1, server_cfg: JSON.stringify(seed) };
   }
   return {
     id: String(row.id),

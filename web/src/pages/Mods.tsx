@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Host, Mod } from "../api";
 import { useAuth } from "../auth";
@@ -25,14 +25,29 @@ export function Mods() {
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState(false);
   const [hits, setHits] = useState<WorkshopHit[]>([]);
+  const [webApiConfigured, setWebApiConfigured] = useState<boolean | null>(null);
 
   const onlineHost = (hosts.data || []).find((h) => h.online) || (hosts.data || [])[0];
 
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<{ configured: boolean }>("/steam/web-api-key")
+      .then((r) => {
+        if (!cancelled) setWebApiConfigured(!!r.configured);
+      })
+      .catch(() => {
+        if (!cancelled) setWebApiConfigured(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   async function refreshTitles(force = false) {
     try {
       await api.post("/mods/workshop-meta", { refreshExpired: true, force });
       mods.reload();
-      toast.success(force ? "Titles refreshed from Steam" : "Expired / missing titles refreshed");
+      toast.success(force ? "Titles refreshed from Steam" : "Missing / placeholder / expired titles refreshed");
     } catch (e: any) {
       toast.error("Refresh failed", { message: e.message });
     }
@@ -147,7 +162,7 @@ export function Mods() {
             <button
               className="btn"
               onClick={() => refreshTitles(false)}
-              title="Refresh titles older than 30 days or missing"
+              title="Refresh missing, placeholder (ID/URL), or expired titles from Steam"
             >
               Refresh titles
             </button>
@@ -157,6 +172,14 @@ export function Mods() {
           </Link>
         </div>
       </div>
+
+      {webApiConfigured === false && (
+        <div className="warn-banner" style={{ marginBottom: 16 }}>
+          No Steam Web API key configured. Workshop titles and required-item deps may be incomplete (modlists often show
+          IDs or URLs). Add a key under <Link to="/admin">Admin → Steam</Link>
+          {can("steam.config") ? "" : " (ask an owner)"} — not the same as a Steam login account.
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h2>Find or add a mod</h2>

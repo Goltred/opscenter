@@ -193,15 +193,13 @@ export function renderServerCfg(cfg: ServerCfgMap, opts: RenderServerCfgOpts = {
       : steamDefault;
   const forcedDifficulty = normalizeForcedDifficulty(merged.forcedDifficulty);
   const admins = normalizeAdmins(merged.admins);
-  const templateEarly = String(opts.missionTemplate || merged.missionTemplate || "").trim();
-  // Default on so the launcher/browser can show the loaded mission (BI: autoSelectMission).
-  const autoSelectMission = merged.autoSelectMission == null ? true : Number(merged.autoSelectMission) !== 0;
-  // -autoInit is a no-op unless persistent=1 (BI startup params). When we have a Missions
-  // template, default persistent on unless the admin explicitly set 0.
+  // Default off — admins opt in when they want the lobby to auto-load a mission.
+  const autoSelectMission = merged.autoSelectMission == null ? false : Number(merged.autoSelectMission) !== 0;
+  // -autoInit is a no-op unless persistent=1 (BI startup params). Default persistent on.
   let persistent: number | undefined;
   if (merged.persistent != null && String(merged.persistent).trim() !== "") {
     persistent = Number(merged.persistent) !== 0 ? 1 : 0;
-  } else if (templateEarly) {
+  } else {
     persistent = 1;
   }
 
@@ -258,7 +256,7 @@ export function renderServerCfg(cfg: ServerCfgMap, opts: RenderServerCfgOpts = {
   const vonCodec = optionalNumber(pickFirst(merged, ["vonCodec"]));
   if (vonCodec != null) lines.push(`vonCodec = ${vonCodec !== 0 ? 1 : 0};`);
 
-  // persistent already emitted above when set / inferred from mission template
+  // persistent already emitted above when set / defaulted
 
   if (admins.length) {
     lines.push(`admins[] = {${admins.map((id) => `"${escStr(id)}"`).join(", ")}};`);

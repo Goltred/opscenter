@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { config } from "../config.js";
+import { resolveSteamWebApiKey } from "../steam/webApiKey.js";
 
 export type OAuthProviderId = "discord" | "google" | "microsoft" | "steam" | "epic";
 
@@ -240,10 +241,11 @@ export async function verifySteamOpenId(query: Record<string, unknown>): Promise
   const steamId = m[1];
 
   let displayName = `Steam ${steamId}`;
-  if (config.oauth.steam.apiKey) {
+  const steamApiKey = resolveSteamWebApiKey();
+  if (steamApiKey) {
     try {
       const sum = await fetch(
-        `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${encodeURIComponent(config.oauth.steam.apiKey)}&steamids=${steamId}`,
+        `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${encodeURIComponent(steamApiKey)}&steamids=${steamId}`,
       );
       if (sum.ok) {
         const data = (await sum.json()) as { response?: { players?: { personaname?: string; avatarfull?: string }[] } };

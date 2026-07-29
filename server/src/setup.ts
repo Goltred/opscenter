@@ -3,6 +3,7 @@ import { listPublicProviders, parseBootstrapOwners } from "./auth/oauth.js";
 import { config } from "./config.js";
 import { getDb } from "./db.js";
 import { getHub } from "./agent/hub.js";
+import { steamWebApiKeyPublic } from "./steam/webApiKey.js";
 
 export type SetupCheckStatus = "pass" | "fail" | "warn" | "info";
 
@@ -24,6 +25,8 @@ export type SetupStatus = {
   providerCount: number;
   bootstrapOwnersConfigured: boolean;
   steamAccountCount: number;
+  steamWebApiKeyConfigured: boolean;
+  steamWebApiKeySource: "panel" | "env" | "none";
   hostCount: number;
   connectedHostCount: number;
   agentPackageReady: boolean;
@@ -92,6 +95,7 @@ export function buildSetupStatus(): SetupStatus {
   const steamAccountCount = (
     getDb().prepare("SELECT COUNT(*) AS n FROM steam_accounts").get() as { n: number }
   ).n;
+  const steamApi = steamWebApiKeyPublic();
   const hostRows = getDb().prepare("SELECT id FROM hosts").all() as { id: string }[];
   const hostCount = hostRows.length;
   const hub = getHub();
@@ -135,6 +139,16 @@ export function buildSetupStatus(): SetupStatus {
           : "Add a Steam account — Workshop mods need one that owns Arma 3; the dedicated server package itself does not.",
     },
     {
+      id: "steam-web-api",
+      label: "Steam Web API key",
+      status: steamApi.configured ? "pass" : "warn",
+      detail: steamApi.configured
+        ? steamApi.source === "panel"
+          ? "Saved on the panel (Admin → Steam). Improves workshop titles and required-item deps."
+          : "Using OC_OAUTH_STEAM_API_KEY from the environment."
+        : "Optional but recommended. Without it, workshop dependency resolution is less reliable and modlist titles may stay as IDs or URLs. Add under Admin → Steam (or this setup step), or set OC_OAUTH_STEAM_API_KEY.",
+    },
+    {
       id: "host",
       label: "First host agent connected",
       status: connectedHostCount > 0 ? "pass" : hostCount > 0 ? "warn" : "fail",
@@ -164,6 +178,8 @@ export function buildSetupStatus(): SetupStatus {
     providerCount,
     bootstrapOwnersConfigured,
     steamAccountCount,
+    steamWebApiKeyConfigured: steamApi.configured,
+    steamWebApiKeySource: steamApi.source,
     hostCount,
     connectedHostCount,
     agentPackageReady: pkg.ok,

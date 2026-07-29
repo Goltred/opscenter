@@ -82,7 +82,8 @@ export function Profiles() {
           <div className="warn">No instances yet.</div>
           <div className="muted" style={{ marginTop: 8 }}>
             You can still create and edit profiles here. To apply one, add a host and instance from the{" "}
-            <Link to="/">Dashboard</Link> and connect the agent.
+            <Link to="/">Dashboard</Link> and connect the agent. Or use the sidebar{" "}
+            <strong>Mission guide</strong> for a step-by-step path.
           </div>
         </div>
       )}
@@ -361,7 +362,7 @@ function SharedSettingsEditorModal({
   const [battlEye, setBattlEye] = useState(true);
   const [verifySignatures, setVerifySignatures] = useState<"0" | "2">("2");
   const [steamProtocolMaxDataSize, setSteamProtocolMaxDataSize] = useState("");
-  const [autoSelectMission, setAutoSelectMission] = useState(true);
+  const [autoSelectMission, setAutoSelectMission] = useState(false);
   const [upnp, setUpnp] = useState(false);
   const [kickDuplicate, setKickDuplicate] = useState(true);
   const [disconnectTimeout, setDisconnectTimeout] = useState("");
@@ -389,7 +390,7 @@ function SharedSettingsEditorModal({
     setBattlEye(Number(c.battlEye ?? c.BattlEye ?? 1) !== 0);
     setVerifySignatures(normalizeVerifySignaturesUi(c.verifySignatures));
     setSteamProtocolMaxDataSize(String(c.steamProtocolMaxDataSize ?? ""));
-    setAutoSelectMission(c.autoSelectMission == null ? true : Number(c.autoSelectMission) !== 0);
+    setAutoSelectMission(c.autoSelectMission == null ? false : Number(c.autoSelectMission) !== 0);
     setUpnp(Number(c.upnp ?? 0) !== 0);
     setKickDuplicate(c.kickDuplicate == null ? true : Number(c.kickDuplicate) !== 0);
     setDisconnectTimeout(String(c.DisconnectTimeout ?? c.disconnectTimeout ?? ""));

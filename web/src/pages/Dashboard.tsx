@@ -5,11 +5,13 @@ import { SetupStatus } from "../components/PanelSetupWizard";
 import { useAuth } from "../auth";
 import { AgentSetupWizard } from "../components/AgentSetupWizard";
 import { AddHcGroupModal, HcGroupCard } from "../components/HcGroupCard";
+import { FirstMissionGuideBanner } from "../components/FirstMissionGuide";
 import { HostFilesModal } from "../components/HostFilesModal";
 import { HostSteamCmdPanel } from "../components/HostSteamCmdPanel";
 import { useToast } from "../components/Toast";
 import { Modal, StatusBadge, useList } from "../components/ui";
 import { formatDateTime } from "../formatTime";
+import { openFirstMissionGuide } from "../firstMissionGuide";
 
 function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -63,6 +65,19 @@ export function Dashboard() {
     }, 50);
     return () => window.clearTimeout(t);
   }, [searchParams, hosts.data]);
+
+  useEffect(() => {
+    if (searchParams.get("guide") !== "mission") return;
+    openFirstMissionGuide();
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("guide");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     if (searchParams.get("browse") !== "1") return;
@@ -186,6 +201,12 @@ export function Dashboard() {
           {" "}— connect a host, save Steam credentials, and confirm the agent package.
         </div>
       )}
+
+      <FirstMissionGuideBanner
+        hosts={hosts.data || []}
+        instances={instances.data || []}
+        loading={hosts.loading || instances.loading}
+      />
 
       {hosts.error && <div className="error">{hosts.error}</div>}
       <div className="grid" style={{ gap: 16 }}>

@@ -5,6 +5,7 @@ import { useAuth } from "../auth";
 import { AgentSetupWizard } from "./AgentSetupWizard";
 import { useToast } from "./Toast";
 import { BrandMark } from "./BrandMark";
+import { notifySteamWebApiChanged } from "../steamWebApiHealth";
 
 export type SetupCheck = {
   id: string;
@@ -24,6 +25,8 @@ export type SetupStatus = {
   providerCount: number;
   bootstrapOwnersConfigured: boolean;
   steamAccountCount: number;
+  steamWebApiKeyConfigured?: boolean;
+  steamWebApiKeySource?: "panel" | "env" | "none";
   hostCount: number;
   connectedHostCount: number;
   agentPackageReady: boolean;
@@ -39,7 +42,7 @@ const STEPS: { id: StepId; label: string }[] = [
   { id: "panel", label: "Panel ready" },
   { id: "access", label: "Sign-in" },
   { id: "urls", label: "Addresses" },
-  { id: "steam", label: "Steam account" },
+  { id: "steam", label: "Steam" },
   { id: "host", label: "First host" },
 ];
 
@@ -65,6 +68,8 @@ export function PanelSetupWizard() {
   const [steamUser, setSteamUser] = useState("");
   const [steamPass, setSteamPass] = useState("");
   const [steamBusy, setSteamBusy] = useState(false);
+  const [webApiKey, setWebApiKey] = useState("");
+  const [webApiBusy, setWebApiBusy] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -153,6 +158,22 @@ export function PanelSetupWizard() {
     }
   }
 
+  async function saveWebApiKey() {
+    if (!webApiKey.trim()) return;
+    setWebApiBusy(true);
+    try {
+      await api.put("/steam/web-api-key", { apiKey: webApiKey.trim() });
+      setWebApiKey("");
+      notifySteamWebApiChanged();
+      toast.success("Steam Web API key saved");
+      await reload();
+    } catch (e: unknown) {
+      toast.error("Save API key failed", { message: errorMessage(e) });
+    } finally {
+      setWebApiBusy(false);
+    }
+  }
+
   function finish() {
     navigate("/", { replace: true });
   }
@@ -171,14 +192,19 @@ export function PanelSetupWizard() {
         <div className="card setup-page-card">
           <BrandMark />
           <h1 style={{ marginTop: 16 }}>Setup complete</h1>
-          <p className="muted">Your panel is ready. Add mission profiles, mods, and instances from the dashboard.</p>
+          <p className="muted">Your panel is ready. Next, set up a mission on your host — or explore from the dashboard.</p>
           <div className="ok-banner" style={{ marginTop: 12 }}>
             {status.connectedHostCount} host{status.connectedHostCount === 1 ? "" : "s"} connected · Steam account saved · Agent
             package available
           </div>
-          <button type="button" className="btn primary" style={{ marginTop: 16 }} onClick={finish}>
-            Go to dashboard
-          </button>
+          <div className="row" style={{ marginTop: 16, gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="btn primary" onClick={finish}>
+              Go to dashboard
+            </button>
+            <button type="button" className="btn" onClick={() => navigate("/?guide=mission", { replace: true })}>
+              Set up a mission
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -188,6 +214,7 @@ export function PanelSetupWizard() {
   const agentCheck = checkById(checks, "agent-package");
   const ownersCheck = checkById(checks, "owners");
   const steamCheck = checkById(checks, "steam");
+  const steamWebApiCheck = checkById(checks, "steam-web-api");
   const hostCheck = checkById(checks, "host");
 
   return (
@@ -359,43 +386,90 @@ export function PanelSetupWizard() {
             {step === "steam" && (
               <div className="grid" style={{ gap: 12 }}>
                 <p className="muted small" style={{ margin: 0 }}>
-                  Steam credentials stay on the panel (encrypted). The agent receives them only per download job — never
-                  stored in the host package. Workshop mods need an account that owns Arma 3; the dedicated server
-                  package itself does not.
+                  Two different Steam settings: a <strong>login account</strong> for downloads on the host, and an optional{" "}
+                  <strong>Web API key</strong> for workshop titles and required-item deps in the panel.
                 </p>
-                {steamCheck?.status === "pass" ? (
-                  <div className="ok-banner">{steamCheck.detail}</div>
-                ) : (
-                  <div className="warn-banner">{steamCheck?.detail}</div>
-                )}
-                {can("steam.config") ? (
-                  <div className="grid cols-3" style={{ gap: 10 }}>
-                    <div>
-                      <label>Label</label>
-                      <input value={steamLabel} onChange={(e) => setSteamLabel(e.target.value)} placeholder="Main" />
+
+                <div className="steam-panel-section" style={{ marginBottom: 0 }}>
+                  <h3 style={{ margin: "0 0 6px", fontSize: 13 }}>Steam account (downloads)</h3>
+                  <p className="muted small" style={{ margin: "0 0 8px" }}>
+                    Encrypted on the panel. Sent to the agent only per SteamCMD job. Workshop mods need an account that
+                    owns Arma 3; the dedicated server package itself does not.
+                  </p>
+                  {steamCheck?.status === "pass" ? (
+                    <div className="ok-banner">{steamCheck.detail}</div>
+                  ) : (
+                    <div className="warn-banner">{steamCheck?.detail}</div>
+                  )}
+                  {can("steam.config") ? (
+                    <>
+                      <div className="grid cols-3" style={{ gap: 10, marginTop: 10 }}>
+                        <div>
+                          <label>Label</label>
+                          <input value={steamLabel} onChange={(e) => setSteamLabel(e.target.value)} placeholder="Main" />
+                        </div>
+                        <div>
+                          <label>Steam username</label>
+                          <input value={steamUser} onChange={(e) => setSteamUser(e.target.value)} />
+                        </div>
+                        <div>
+                          <label>Password</label>
+                          <input type="password" value={steamPass} onChange={(e) => setSteamPass(e.target.value)} />
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn primary"
+                        style={{ marginTop: 10 }}
+                        disabled={steamBusy || !steamLabel.trim() || !steamUser.trim() || !steamPass}
+                        onClick={() => void addSteamAccount()}
+                      >
+                        {steamBusy ? "Saving…" : "Save Steam account"}
+                      </button>
+                    </>
+                  ) : (
+                    <p className="muted small">You need permission to add Steam accounts. Ask an admin.</p>
+                  )}
+                </div>
+
+                <div className="steam-panel-section" style={{ marginBottom: 0 }}>
+                  <h3 style={{ margin: "0 0 6px", fontSize: 13 }}>Steam Web API key (optional)</h3>
+                  <p className="muted small" style={{ margin: "0 0 8px" }}>
+                    Not your Steam password. Get a free key at{" "}
+                    <a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noreferrer">
+                      steamcommunity.com/dev/apikey
+                    </a>
+                    . Without it, modlists may show IDs/URLs instead of names and workshop dependency expansion is less
+                    reliable.
+                  </p>
+                  {steamWebApiCheck?.status === "pass" ? (
+                    <div className="ok-banner">{steamWebApiCheck.detail}</div>
+                  ) : (
+                    <div className="warn-banner">{steamWebApiCheck?.detail}</div>
+                  )}
+                  {can("steam.config") && steamWebApiCheck?.status !== "pass" && (
+                    <div className="grid" style={{ gap: 8, marginTop: 10 }}>
+                      <div>
+                        <label>API key</label>
+                        <input
+                          type="password"
+                          value={webApiKey}
+                          onChange={(e) => setWebApiKey(e.target.value)}
+                          placeholder="Paste Steam Web API key"
+                          autoComplete="off"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={webApiBusy || !webApiKey.trim()}
+                        onClick={() => void saveWebApiKey()}
+                      >
+                        {webApiBusy ? "Saving…" : "Save Web API key"}
+                      </button>
                     </div>
-                    <div>
-                      <label>Steam username</label>
-                      <input value={steamUser} onChange={(e) => setSteamUser(e.target.value)} />
-                    </div>
-                    <div>
-                      <label>Password</label>
-                      <input type="password" value={steamPass} onChange={(e) => setSteamPass(e.target.value)} />
-                    </div>
-                  </div>
-                ) : (
-                  <p className="muted small">You need permission to add Steam accounts. Ask an admin.</p>
-                )}
-                {can("steam.config") && (
-                  <button
-                    type="button"
-                    className="btn primary"
-                    disabled={steamBusy || !steamLabel.trim() || !steamUser.trim() || !steamPass}
-                    onClick={() => void addSteamAccount()}
-                  >
-                    {steamBusy ? "Saving…" : "Save Steam account"}
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
             )}
 

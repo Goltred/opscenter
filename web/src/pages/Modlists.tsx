@@ -95,6 +95,22 @@ export function Modlists() {
   const [editing, setEditing] = useState<Modlist | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
+  const [webApiConfigured, setWebApiConfigured] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<{ configured: boolean }>("/steam/web-api-key")
+      .then((r) => {
+        if (!cancelled) setWebApiConfigured(!!r.configured);
+      })
+      .catch(() => {
+        if (!cancelled) setWebApiConfigured(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function onImport(file: File) {
     setImporting(true);
@@ -141,6 +157,13 @@ export function Modlists() {
           )}
         </div>
       </div>
+
+      {webApiConfigured === false && (
+        <div className="warn-banner" style={{ marginBottom: 16 }}>
+          No Steam Web API key — entry names may stay as IDs or URLs. Add one under{" "}
+          <Link to="/admin">Admin → Steam</Link>.
+        </div>
+      )}
 
       <div className="card">
         <table>

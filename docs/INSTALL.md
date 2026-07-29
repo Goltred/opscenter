@@ -168,7 +168,7 @@ After sign-in, the panel opens the **setup wizard** (or go to `/setup`). It walk
 1. Confirm the agent package is available  
 2. Sign-in / Owner allowlist  
 3. Panel and agent gateway URLs  
-4. Save a **Steam account** (for Arma install and mods)  
+4. Save a **Steam account** (for Arma install and mods), and ideally a **Steam Web API key** (workshop titles/deps — not your Steam password)  
 5. **Add your first host** (agent package → game machine → verify)
 
 Skip moves to the next step; on the last step, skip leaves the dashboard without finishing. After you have at least one host entry, the panel stops forcing the wizard.

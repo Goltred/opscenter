@@ -29,6 +29,7 @@ import { resolveSteamAccount, steamCredsPayload } from "../steam/accounts.js";
 import { agentPackageAvailable, buildAgentJson, streamAgentPackageZip } from "../agentPackage.js";
 import { buildSetupStatus, dismissSetup, agentGatewayUrl } from "../setup.js";
 import { encryptSecret } from "../secrets.js";
+import { saveSteamWebApiKey, steamWebApiKeyPublic } from "../steam/webApiKey.js";
 import { normalizeDlcCodes } from "../arma/dlcs.js";
 import {
   isDefaultModsLibrary,
@@ -52,6 +53,7 @@ import {
   getDifficultyPresetRevision,
   getProfileRevision,
   getOrCreateSharedSettings,
+  DEFAULT_SHARED_SERVER_CFG,
   getSharedCfgRevision,
   listDifficultyPresetRevisions,
   listProfileRevisions,
@@ -1612,7 +1614,9 @@ apiRouter.post("/shared-cfg-presets", requirePerm("instance.config.edit"), (req:
   if (existing) return res.status(200).json({ id: existing.id });
   const id = uuid();
   const serverCfg =
-    req.body?.serverCfg && typeof req.body.serverCfg === "object" ? (req.body.serverCfg as Record<string, unknown>) : {};
+    req.body?.serverCfg && typeof req.body.serverCfg === "object" && Object.keys(req.body.serverCfg).length
+      ? (req.body.serverCfg as Record<string, unknown>)
+      : { ...DEFAULT_SHARED_SERVER_CFG };
   getDb()
     .prepare(
       `INSERT INTO shared_cfg_presets(id, name, version, server_cfg, created_at, updated_at)
@@ -4236,6 +4240,32 @@ apiRouter.post("/steam-accounts", requirePerm("steam.config"), (req, res) => {
 apiRouter.delete("/steam-accounts/:id", requirePerm("steam.config"), (req, res) => {
   getDb().prepare("DELETE FROM steam_accounts WHERE id = ?").run(req.params.id);
   res.status(204).end();
+});
+
+apiRouter.get("/steam/web-api-key", (req: AuthedRequest, res) => {
+  const grants = req.grants || [];
+  const allowed = grants.some(
+    (g) =>
+      g.permission === "steam.config" ||
+      g.permission === "mod.manage" ||
+      g.permission === "profile.apply" ||
+      g.permission === "host.add" ||
+      g.permission === "instance.view" ||
+      g.permission === "user.manage",
+  );
+  if (!allowed) return res.status(403).json({ error: "forbidden" });
+  res.json(steamWebApiKeyPublic());
+});
+
+apiRouter.put("/steam/web-api-key", requirePerm("steam.config"), (req: AuthedRequest, res) => {
+  const clear = !!req.body?.clear;
+  const apiKey = String(req.body?.apiKey ?? "");
+  if (!clear && !apiKey.trim()) {
+    return res.status(400).json({ error: "apiKey required (or set clear: true)" });
+  }
+  const status = saveSteamWebApiKey({ apiKey, clear });
+  audit(req, clear ? "steam.web_api_key.clear" : "steam.web_api_key.save", "settings", "ok");
+  res.json(status);
 });
 
 apiRouter.get("/discord/config", requirePerm("discord.config"), (_req, res) => {

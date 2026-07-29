@@ -3,8 +3,10 @@ import { NavLink, useLocation } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { PROFILES_HEALTH_EVENT } from "../profilesHealth";
+import { STEAM_WEB_API_EVENT } from "../steamWebApiHealth";
 import { ActiveActionsPanel } from "./ActiveActionsPanel";
 import { BrandMark } from "./BrandMark";
+import { FirstMissionGuideListener, FirstMissionGuideNavButton } from "./FirstMissionGuide";
 import { UpcomingScheduleBanner, useUpcomingSchedules } from "./UpcomingScheduleBanner";
 
 const nav = [
@@ -22,7 +24,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout, can } = useAuth();
   const location = useLocation();
   const [invalidProfiles, setInvalidProfiles] = useState(0);
+  const [steamWebApiMissing, setSteamWebApiMissing] = useState(false);
   const canViewProfiles = can("profile.view");
+  const canSeeAdmin = can("user.manage");
   const upcoming = useUpcomingSchedules();
 
   useEffect(() => {
@@ -57,6 +61,36 @@ export function Layout({ children }: { children: React.ReactNode }) {
       window.removeEventListener(PROFILES_HEALTH_EVENT, onHealth);
     };
   }, [canViewProfiles, user?.id, location.pathname]);
+
+  useEffect(() => {
+    if (!canSeeAdmin) {
+      setSteamWebApiMissing(false);
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      api
+        .get<{ configured: boolean }>("/steam/web-api-key")
+        .then((r) => {
+          if (!cancelled) setSteamWebApiMissing(!r.configured);
+        })
+        .catch(() => {
+          /* keep previous */
+        });
+    };
+    load();
+    const id = window.setInterval(load, 60_000);
+    const onFocus = () => load();
+    const onChanged = () => load();
+    window.addEventListener("focus", onFocus);
+    window.addEventListener(STEAM_WEB_API_EVENT, onChanged);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener(STEAM_WEB_API_EVENT, onChanged);
+    };
+  }, [canSeeAdmin, user?.id, location.pathname]);
 
   return (
     <div className="app">
@@ -103,6 +137,15 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     {upcoming.needsConfirmCount > 0 ? "!" : upcoming.notable.length}
                   </span>
                 )}
+                {n.to === "/admin" && steamWebApiMissing && (
+                  <span
+                    className="nav-alert"
+                    title="Steam Web API key not set — workshop titles and deps may be incomplete"
+                    aria-label="Steam Web API key not set"
+                  >
+                    !
+                  </span>
+                )}
               </NavLink>
             );
           })}
@@ -110,6 +153,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <ActiveActionsPanel />
         <div className="sidebar-foot">
           <div className="small muted">{user?.email}</div>
+          <FirstMissionGuideNavButton />
           <button className="btn ghost small" onClick={() => logout()}>Sign out</button>
         </div>
       </aside>
@@ -121,6 +165,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         />
         <div className="content-body">{children}</div>
       </main>
+      <FirstMissionGuideListener />
     </div>
   );
 }

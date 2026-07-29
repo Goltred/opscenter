@@ -4,6 +4,7 @@ import { useAuth } from "../auth";
 import { useToast } from "../components/Toast";
 import { Modal, useList } from "../components/ui";
 import { formatDateTime } from "../formatTime";
+import { notifySteamWebApiChanged, STEAM_WEB_API_EVENT } from "../steamWebApiHealth";
 
 const tabs = ["Users", "Roles", "Steam", "Discord", "Audit"] as const;
 type Tab = (typeof tabs)[number];
@@ -16,11 +17,55 @@ function errorMessage(e: unknown): string {
 
 export function Admin() {
   const [tab, setTab] = useState<Tab>("Users");
+  const [steamWebApiMissing, setSteamWebApiMissing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      api
+        .get<{ configured: boolean }>("/steam/web-api-key")
+        .then((r) => {
+          if (!cancelled) setSteamWebApiMissing(!r.configured);
+        })
+        .catch(() => {
+          /* keep */
+        });
+    };
+    load();
+    const onChanged = () => load();
+    window.addEventListener(STEAM_WEB_API_EVENT, onChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(STEAM_WEB_API_EVENT, onChanged);
+    };
+  }, [tab]);
+
   return (
     <div>
       <div className="page-head"><h1>Admin</h1><div className="muted">Users, granular roles, Steam credentials, and audit.</div></div>
-      <div className="row" style={{ marginBottom: 16 }}>
-        {tabs.map((t) => <button key={t} className={"btn small " + (tab === t ? "primary" : "")} onClick={() => setTab(t)}>{t}</button>)}
+      <div className="row" style={{ marginBottom: 16, gap: 8, flexWrap: "wrap" }}>
+        {tabs.map((t) => (
+          <button
+            key={t}
+            type="button"
+            className={"btn small " + (tab === t ? "primary" : "")}
+            onClick={() => setTab(t)}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {t}
+              {t === "Steam" && steamWebApiMissing && (
+                <span
+                  className="nav-alert"
+                  title="Steam Web API key not set"
+                  aria-label="Steam Web API key not set"
+                  style={{ position: "static" }}
+                >
+                  !
+                </span>
+              )}
+            </span>
+          </button>
+        ))}
       </div>
       {tab === "Users" && <Users />}
       {tab === "Roles" && <Roles />}
@@ -221,17 +266,140 @@ function EditPerms({ role, all, onClose, onSaved }: { role: Role; all: string[];
 
 function Steam() {
   const toast = useToast();
+  const { can } = useAuth();
   const accounts = useList<SteamAccountRow[]>(() => api.get("/steam-accounts"));
   const [label, setLabel] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  async function add() {
-    try { await api.post("/steam-accounts", { label, username, password }); setLabel(""); setUsername(""); setPassword(""); accounts.reload(); }
-    catch (e: unknown) { toast.error("Add account failed", { message: errorMessage(e) }); }
+
+  type WebApiStatus = {
+    configured: boolean;
+    source: "panel" | "env" | "none";
+    hasPanelKey: boolean;
+    hasEnvKey: boolean;
+  };
+  const [webApi, setWebApi] = useState<WebApiStatus | null>(null);
+  const [webApiKey, setWebApiKey] = useState("");
+  const [webApiBusy, setWebApiBusy] = useState(false);
+
+  async function reloadWebApi() {
+    try {
+      setWebApi(await api.get<WebApiStatus>("/steam/web-api-key"));
+    } catch {
+      setWebApi(null);
+    }
   }
-  async function del(id: string) { await api.del(`/steam-accounts/${id}`); accounts.reload(); }
+
+  useEffect(() => {
+    void reloadWebApi();
+  }, []);
+
+  async function add() {
+    try {
+      await api.post("/steam-accounts", { label, username, password });
+      setLabel("");
+      setUsername("");
+      setPassword("");
+      accounts.reload();
+    } catch (e: unknown) {
+      toast.error("Add account failed", { message: errorMessage(e) });
+    }
+  }
+  async function del(id: string) {
+    await api.del(`/steam-accounts/${id}`);
+    accounts.reload();
+  }
+
+  async function saveWebApiKey() {
+    if (!webApiKey.trim()) {
+      toast.error("Enter an API key", { message: "Or clear the panel key if you only want the env fallback." });
+      return;
+    }
+    setWebApiBusy(true);
+    try {
+      const next = await api.put<WebApiStatus>("/steam/web-api-key", { apiKey: webApiKey.trim() });
+      setWebApi(next);
+      setWebApiKey("");
+      notifySteamWebApiChanged();
+      toast.success("Steam Web API key saved", {
+        message: "Existing mods are not auto-refreshed (avoids Steam rate limits). On Mods, use Refresh titles for placeholder names; deps refresh on next resolve/apply.",
+        action: { label: "Open Mods", to: "/mods" },
+        ttlMs: 14_000,
+      });
+    } catch (e: unknown) {
+      toast.error("Save failed", { message: errorMessage(e) });
+    } finally {
+      setWebApiBusy(false);
+    }
+  }
+
+  async function clearWebApiKey() {
+    if (!confirm("Remove the panel-saved Steam Web API key? Env OC_OAUTH_STEAM_API_KEY still applies if set.")) return;
+    setWebApiBusy(true);
+    try {
+      const next = await api.put<WebApiStatus>("/steam/web-api-key", { clear: true });
+      setWebApi(next);
+      setWebApiKey("");
+      notifySteamWebApiChanged();
+      toast.success("Panel API key cleared");
+    } catch (e: unknown) {
+      toast.error("Clear failed", { message: errorMessage(e) });
+    } finally {
+      setWebApiBusy(false);
+    }
+  }
+
   return (
     <div className="grid" style={{ gap: 16 }}>
+      <div className="card">
+        <h2>Steam Web API key</h2>
+        <div className="muted small">
+          Not your Steam login. This is a free key from{" "}
+          <a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noreferrer">
+            steamcommunity.com/dev/apikey
+          </a>
+          . It improves workshop <strong>titles</strong> and <strong>required-item</strong> resolution on Mods /
+          Modlists. SteamCMD downloads still use the accounts below.
+        </div>
+        {webApi && !webApi.configured && (
+          <div className="warn-banner" style={{ marginTop: 10 }}>
+            No Web API key configured. Modlists may show IDs/URLs instead of names, and dependency expansion is less
+            reliable. You can also set <code>OC_OAUTH_STEAM_API_KEY</code> in the environment.
+          </div>
+        )}
+        {webApi?.configured && (
+          <div className="ok-banner" style={{ marginTop: 10 }}>
+            Key active via {webApi.source === "panel" ? "Admin (panel)" : "environment (OC_OAUTH_STEAM_API_KEY)"}
+            {webApi.source === "panel" && webApi.hasEnvKey ? " · env also set (panel wins)" : ""}
+            .
+          </div>
+        )}
+        {can("steam.config") && (
+          <div className="grid" style={{ gap: 10, marginTop: 10 }}>
+            <div>
+              <label>API key</label>
+              <input
+                type="password"
+                value={webApiKey}
+                onChange={(e) => setWebApiKey(e.target.value)}
+                placeholder={webApi?.hasPanelKey ? "•••••••• (enter new to replace)" : "Paste Steam Web API key"}
+                autoComplete="off"
+              />
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <button type="button" className="btn primary" disabled={webApiBusy || !webApiKey.trim()} onClick={() => void saveWebApiKey()}>
+                {webApiBusy ? "Saving…" : "Save API key"}
+              </button>
+              {webApi?.hasPanelKey && (
+                <button type="button" className="btn" disabled={webApiBusy} onClick={() => void clearWebApiKey()}>
+                  Clear panel key
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="card">
         <h2>Add Steam account</h2>
         <div className="muted small">

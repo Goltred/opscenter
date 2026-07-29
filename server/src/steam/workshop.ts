@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getDb, jsonParse } from "../db.js";
-import { config } from "../config.js";
+import { resolveSteamWebApiKey } from "./webApiKey.js";
 
 export type WorkshopMeta = {
   workshopId: string;
@@ -34,6 +34,20 @@ function isFresh(fetchedAt: string | null | undefined, maxAgeMs: number): boolea
   const t = Date.parse(fetchedAt.includes("T") ? fetchedAt : fetchedAt.replace(" ", "T") + "Z");
   if (!Number.isFinite(t)) return false;
   return Date.now() - t < maxAgeMs;
+}
+
+/**
+ * True when the stored name is not a real Steam title (id-only, URL, empty).
+ * Those rows must be allowed to refresh — otherwise imports that saved the link as
+ * the name never get fixed by ensureWorkshopMeta.
+ */
+export function isPlaceholderWorkshopTitle(workshopId: string, title: string | null | undefined): boolean {
+  const t = String(title || "").trim();
+  if (!t) return true;
+  if (t === String(workshopId).trim()) return true;
+  if (/^https?:\/\//i.test(t)) return true;
+  if (/steamcommunity\.com/i.test(t)) return true;
+  return false;
 }
 
 export function profileModsSourceHash(client: string[], server: string[]): string {
@@ -90,7 +104,8 @@ function persistWorkshopMetaRows(fetched: Map<string, WorkshopMeta>) {
        preview_url=excluded.preview_url,
        workshop_title=CASE WHEN excluded.workshop_title != '' THEN excluded.workshop_title ELSE mods.workshop_title END,
        name=CASE
-         WHEN mods.name = mods.workshop_id OR mods.name = '' THEN COALESCE(NULLIF(excluded.workshop_title,''), mods.name)
+         WHEN mods.name = mods.workshop_id OR mods.name = '' OR mods.name LIKE 'http%' OR lower(mods.name) LIKE '%steamcommunity.com%'
+           THEN COALESCE(NULLIF(excluded.workshop_title,''), mods.name)
          ELSE mods.name
        END,
        workshop_fetched_at=datetime('now')`,
@@ -141,12 +156,17 @@ export async function ensureWorkshopMeta(
 
       const cachedTitle = (row?.workshop_title || row?.name || "").trim();
       const cachedPreview = (row?.preview_url || "").trim();
-      const usable = !!(cachedTitle || cachedPreview);
+      const hasRealTitle = !isPlaceholderWorkshopTitle(id, cachedTitle);
+      const usable = hasRealTitle || !!cachedPreview;
 
-      if (usable) {
+      if (usable && hasRealTitle) {
         // Fresh or expired: serve cache. No background Steam refresh.
-        result.set(id, { workshopId: id, title: cachedTitle || id, previewUrl: cachedPreview });
+        result.set(id, { workshopId: id, title: cachedTitle, previewUrl: cachedPreview });
         void maxAgeMs; // TTL enforced by refreshExpiredWorkshopMeta / force
+      } else if (usable && !hasRealTitle) {
+        // Preview-only / placeholder title — still try to fetch a real name.
+        needFetch.push(id);
+        result.set(id, { workshopId: id, title: cachedTitle || id, previewUrl: cachedPreview });
       } else {
         needFetch.push(id);
       }
@@ -198,7 +218,8 @@ export async function refreshExpiredWorkshopMeta(
       | undefined;
     const title = (row?.workshop_title || row?.name || "").trim();
     const preview = (row?.preview_url || "").trim();
-    if (row && title && isFresh(row.workshop_fetched_at, maxAgeMs)) {
+    const realTitle = title && !isPlaceholderWorkshopTitle(id, title);
+    if (row && realTitle && isFresh(row.workshop_fetched_at, maxAgeMs)) {
       result.set(id, { workshopId: id, title, previewUrl: preview });
     } else {
       need.push(id);
@@ -245,7 +266,7 @@ export async function describeWorkshopItems(
   if (opts.network) {
     const missing = unique.filter((id) => {
       const m = readCachedWorkshopMeta([id]).get(id);
-      return !m?.title || m.title === id;
+      return !m || isPlaceholderWorkshopTitle(id, m.title);
     });
     if (missing.length) await ensureWorkshopMeta(missing).catch(() => {});
   }
@@ -469,7 +490,7 @@ export async function getWorkshopDependenciesBatch(
 
     if (!needNetwork.length) return out;
 
-    const apiKey = config.oauth.steam.apiKey;
+    const apiKey = resolveSteamWebApiKey();
     if (apiKey) {
       const fromApi = await fetchChildrenViaApiBatch(needNetwork, apiKey);
       if (fromApi) {
