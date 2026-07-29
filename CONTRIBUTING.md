@@ -1,13 +1,13 @@
 # Contributing
 
-Thanks for interest in OpsCenter. This repo is intentionally small and product-focused. Be mindful that the repository is intentionally "left to its fate", this was fully vibe-coded and the intent is to be able to use it as-is. 
+Thanks for your interest in OpsCenter. This repo is intentionally small and product-focused. Be mindful that the repository is intentionally "left to its fate", this was fully vibe-coded and the intent is to be able to use it as-is. 
 Updates with coding agents are encouraged, they will be reviewed by me personally for now  (since I want to keep control and is also the other part of the learning experience). I will probably end up using an agent for it in the future as well.
 
 ## Development setup
 
 1. Node.js **20+**
 2. .NET **8** SDK (to build the host agent)
-3. Copy `deploy/control-plane.env.example` → `deploy/control-plane.env` and configure OAuth + `OC_BOOTSTRAP_OWNERS` (see [docs/INSTALL.md](docs/INSTALL.md); doc map: [docs/README.md](docs/README.md))
+3. Copy `deploy/control-plane.env.example` → `deploy/control-plane.env` and configure OAuth + `OC_BOOTSTRAP_OWNERS` (see [docs/INSTALL.md](docs/INSTALL.md); doc map: [docs/INDEX.md](docs/INDEX.md))
 
 ```powershell
 npm run install:all

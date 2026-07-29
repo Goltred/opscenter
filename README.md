@@ -35,13 +35,13 @@ web/             React + TypeScript SPA (Vite)
 agent-csharp/    .NET 8 host agent (outbound client)
 scripts/         npm start / npm run dev helpers
 deploy/          env files + install-opscenter.ps1
-docs/            Install, day-to-day setup, security notes (see docs/README.md)
-.cursor/         Rules and skills used while building this project
+docs/            Install, day-to-day setup, security notes (see docs/INDEX.md)
+.cursor/         Project rules for AI-assisted work
 ```
 
 ## Getting started
 
-Full guide: **[docs/INSTALL.md](docs/INSTALL.md)**. Contributing: **[CONTRIBUTING.md](CONTRIBUTING.md)**. Doc map: **[docs/README.md](docs/README.md)**.
+Full guide: **[docs/INSTALL.md](docs/INSTALL.md)**. Contributing: **[CONTRIBUTING.md](CONTRIBUTING.md)**. Doc map: **[docs/INDEX.md](docs/INDEX.md)**.
 
 Repo: [github.com/Goltred/opscenter](https://github.com/Goltred/opscenter)
 
@@ -97,7 +97,7 @@ Vite on **http://localhost:5173** (proxies `/api` to `:8080`).
 
 ## Built with AI-assisted development
 
-This repo is a working product and an example of steering agents toward a real operator tool (Cursor rules/skills under `.cursor/`). Stakeholder testing mattered more than polishing every line by hand — see the history if you are curious; install docs above are the path for operators.
+This repo is a working product and an example of steering agents toward a real operator tool (Cursor rules under `.cursor/`). Stakeholder testing mattered more than polishing every line by hand — see the history if you are curious; install docs above are the path for operators.
 
 ## License
 

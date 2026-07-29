@@ -233,7 +233,7 @@ Day-to-day operations (hosts, mods, profiles, headless) are in **[SETUP.md](SETU
 | `deploy/control-plane.env` | Panel configuration (create from `.example`) |
 | `scripts/start.mjs` | Load env, build UI, start API+SPA (`npm start`) |
 | `agent-csharp/publish/` | Default folder for host agent binary |
-| `docs/README.md` | Map of install vs setup vs security docs |
+| `docs/INDEX.md` | Map of install vs setup vs security docs |
 | `docs/SETUP.md` | Day-to-day operations after install |
 | `docs/SECURITY.md` | Threat model and hardening (current stack) |
 | `SECURITY.md` (repo root) | How to report vulnerabilities |
