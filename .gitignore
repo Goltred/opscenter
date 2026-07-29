@@ -30,6 +30,8 @@ deploy/keys/
 *.db
 .oc_secrets_key
 deploy/.oc_secrets_key
+deploy/oauth-bootstrap.json
+deploy/oauth-bootstrap.json.imported
 agent-csharp/publish/
 agent-csharp/bin/
 agent-csharp/obj/

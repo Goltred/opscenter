@@ -67,6 +67,44 @@ export function StatusBadge({ state, online }: { state: string; online?: boolean
   return <span className="badge"><span className={"dot " + dot} /> {label}</span>;
 }
 
+/** Horizontal on/off switch — green when on, red when off. */
+export function StatusToggle({
+  checked,
+  onChange,
+  disabled,
+  onLabel = "On",
+  offLabel = "Off",
+  title,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+  onLabel?: string;
+  offLabel?: string;
+  title?: string;
+}) {
+  return (
+    <label
+      className={"status-toggle" + (checked ? " is-on" : " is-off") + (disabled ? " is-disabled" : "")}
+      title={title}
+    >
+      <input
+        type="checkbox"
+        className="status-toggle-input"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="status-toggle-track" aria-hidden>
+        <span className="status-toggle-label status-toggle-label--on">{onLabel}</span>
+        <span className="status-toggle-label status-toggle-label--off">{offLabel}</span>
+        <span className="status-toggle-knob" />
+      </span>
+      <span className="sr-only">{checked ? onLabel : offLabel}</span>
+    </label>
+  );
+}
+
 // useList: simple data loader with refresh.
 export function useList<T>(loader: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);

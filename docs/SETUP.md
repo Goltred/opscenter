@@ -91,10 +91,11 @@ Optional Discord channel / requester IDs on a schedule work with **Admin → Dis
 
 ---
 
-## Admin: users, roles, Steam, Discord
+## Admin: users, roles, sign-in, Steam, Discord
 
 - **Users** — approve pending OAuth accounts, disable, assign roles. First Owner comes from `OC_BOOTSTRAP_OWNERS` (INSTALL).
 - **Roles** — granular permissions (`host.add`, `instance.control`, `schedule.*`, …), optionally scoped to a host or instance.
+- **Sign-in** — OAuth providers live in the panel (encrypted). Toggle any configured provider on/off for the login page. Install seeds the first provider via `oauth-bootstrap.json`; env `OC_OAUTH_*` is an optional legacy fallback.
 - **Steam** — login accounts for installs/downloads; optional Web API key for workshop titles/deps; Guard cache status after first successful Guard on the host.
 - **Discord** — optional bot for schedule reminders and slash commands (`/help` in Discord lists them). Configure token, guild, channels under Admin → Discord.
 - **Audit** — who did what in the panel.

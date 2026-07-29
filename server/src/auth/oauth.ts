@@ -1,8 +1,15 @@
 import crypto from "node:crypto";
 import { config } from "../config.js";
 import { resolveSteamWebApiKey } from "../steam/webApiKey.js";
+import {
+  oauthCallbackUrl,
+  resolveOAuth2,
+  resolveSteamLoginEnabled,
+  isOAuth2LoginEnabled,
+  type OAuthProviderId,
+} from "./oauthProviders.js";
 
-export type OAuthProviderId = "discord" | "google" | "microsoft" | "steam" | "epic";
+export type { OAuthProviderId };
 
 export type ProviderPublic = {
   id: OAuthProviderId;
@@ -31,19 +38,20 @@ type OAuth2Def = {
 };
 
 function callbackUrl(provider: string): string {
-  return `${config.publicUrl.replace(/\/$/, "")}/api/auth/oauth/${provider}/callback`;
+  return oauthCallbackUrl(provider);
 }
 
 function discordDef(): OAuth2Def | null {
-  if (!config.oauth.discord.clientId || !config.oauth.discord.clientSecret) return null;
+  const creds = resolveOAuth2("discord");
+  if (!creds || !isOAuth2LoginEnabled("discord")) return null;
   return {
     id: "discord",
     label: "Discord",
     authUrl: "https://discord.com/api/oauth2/authorize",
     tokenUrl: "https://discord.com/api/oauth2/token",
     scopes: ["identify", "email"],
-    clientId: config.oauth.discord.clientId,
-    clientSecret: config.oauth.discord.clientSecret,
+    clientId: creds.clientId,
+    clientSecret: creds.clientSecret,
     profile: async (accessToken) => {
       const r = await fetch("https://discord.com/api/users/@me", {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -62,15 +70,16 @@ function discordDef(): OAuth2Def | null {
 }
 
 function googleDef(): OAuth2Def | null {
-  if (!config.oauth.google.clientId || !config.oauth.google.clientSecret) return null;
+  const creds = resolveOAuth2("google");
+  if (!creds || !isOAuth2LoginEnabled("google")) return null;
   return {
     id: "google",
     label: "Google",
     authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token",
     scopes: ["openid", "email", "profile"],
-    clientId: config.oauth.google.clientId,
-    clientSecret: config.oauth.google.clientSecret,
+    clientId: creds.clientId,
+    clientSecret: creds.clientSecret,
     extraAuthParams: { access_type: "online", prompt: "select_account" },
     profile: async (accessToken) => {
       const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
@@ -90,16 +99,17 @@ function googleDef(): OAuth2Def | null {
 }
 
 function microsoftDef(): OAuth2Def | null {
-  if (!config.oauth.microsoft.clientId || !config.oauth.microsoft.clientSecret) return null;
-  const tenant = config.oauth.microsoft.tenant || "common";
+  const creds = resolveOAuth2("microsoft");
+  if (!creds || !isOAuth2LoginEnabled("microsoft")) return null;
+  const tenant = creds.tenant || "common";
   return {
     id: "microsoft",
     label: "Microsoft",
     authUrl: `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`,
     tokenUrl: `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`,
     scopes: ["openid", "profile", "email", "User.Read"],
-    clientId: config.oauth.microsoft.clientId,
-    clientSecret: config.oauth.microsoft.clientSecret,
+    clientId: creds.clientId,
+    clientSecret: creds.clientSecret,
     profile: async (accessToken) => {
       const r = await fetch("https://graph.microsoft.com/v1.0/me", {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -123,15 +133,16 @@ function microsoftDef(): OAuth2Def | null {
 }
 
 function epicDef(): OAuth2Def | null {
-  if (!config.oauth.epic.clientId || !config.oauth.epic.clientSecret) return null;
+  const creds = resolveOAuth2("epic");
+  if (!creds || !isOAuth2LoginEnabled("epic")) return null;
   return {
     id: "epic",
     label: "Epic Games",
     authUrl: "https://www.epicgames.com/id/authorize",
     tokenUrl: "https://api.epicgames.dev/epic/oauth/v2/token",
     scopes: ["basic_profile"],
-    clientId: config.oauth.epic.clientId,
-    clientSecret: config.oauth.epic.clientSecret,
+    clientId: creds.clientId,
+    clientSecret: creds.clientSecret,
     profile: async (accessToken) => {
       const r = await fetch("https://api.epicgames.dev/epic/oauth/v2/userInfo", {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -160,7 +171,7 @@ export function getOAuth2Provider(id: string): OAuth2Def | null {
 
 export function steamEnabled(): boolean {
   // Steam OpenID works without API key; key only enriches display name.
-  return !!config.oauth.steam.enabled;
+  return resolveSteamLoginEnabled();
 }
 
 export function listPublicProviders(): ProviderPublic[] {

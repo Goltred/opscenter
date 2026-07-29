@@ -2,14 +2,27 @@ import { useEffect, useState } from "react";
 import { api, AuditEntry, Host, Instance, Role, User, UserRole } from "../api";
 import { useAuth } from "../auth";
 import { useToast } from "../components/Toast";
-import { Modal, useList } from "../components/ui";
+import { Modal, StatusToggle, useList } from "../components/ui";
 import { formatDateTime } from "../formatTime";
 import { notifySteamWebApiChanged, STEAM_WEB_API_EVENT } from "../steamWebApiHealth";
 
-const tabs = ["Users", "Roles", "Steam", "Discord", "Audit"] as const;
+const tabs = ["Users", "Roles", "Sign-in", "Steam", "Discord", "Audit"] as const;
 type Tab = (typeof tabs)[number];
 
 type SteamAccountRow = { id: string; label: string; username: string; guardCached?: boolean };
+
+type OAuthProviderRow = {
+  id: "discord" | "google" | "microsoft" | "steam" | "epic";
+  label: string;
+  configured: boolean;
+  enabled: boolean;
+  callbackUrl: string;
+  clientId: string;
+  tenant?: string;
+  source: "panel" | "env" | "mixed" | "none";
+  hasPanelConfig: boolean;
+  hasEnvConfig: boolean;
+};
 
 function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -42,7 +55,7 @@ export function Admin() {
 
   return (
     <div>
-      <div className="page-head"><h1>Admin</h1><div className="muted">Users, granular roles, Steam credentials, and audit.</div></div>
+      <div className="page-head"><h1>Admin</h1><div className="muted">Users, roles, sign-in, Steam, Discord, and audit.</div></div>
       <div className="row" style={{ marginBottom: 16, gap: 8, flexWrap: "wrap" }}>
         {tabs.map((t) => (
           <button
@@ -69,6 +82,7 @@ export function Admin() {
       </div>
       {tab === "Users" && <Users />}
       {tab === "Roles" && <Roles />}
+      {tab === "Sign-in" && <SignInProviders />}
       {tab === "Steam" && <Steam />}
       {tab === "Discord" && <Discord />}
       {tab === "Audit" && <Audit />}
@@ -104,7 +118,7 @@ function Users() {
         <h2>Access model</h2>
         <div className="muted small">
           Users sign in with OAuth (Discord, Google, Microsoft, Steam, Epic). New accounts stay pending until you approve them and assign a role.
-          Owners are seeded via <code>OC_BOOTSTRAP_OWNERS</code> (provider:subject allowlist).
+          First Owner comes from <code>OC_BOOTSTRAP_OWNERS</code>. Manage login providers under Admin → Sign-in.
         </div>
       </div>
       {pending.length > 0 && (
@@ -261,6 +275,271 @@ function EditPerms({ role, all, onClose, onSaved }: { role: Role; all: string[];
       </div>
       <button className="btn primary" style={{ marginTop: 12 }} onClick={save}>Save</button>
     </Modal>
+  );
+}
+
+function SignInProviders() {
+  const toast = useToast();
+  const { can } = useAuth();
+  const [providers, setProviders] = useState<OAuthProviderRow[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<
+    Record<string, { clientId: string; clientSecret: string; tenant: string }>
+  >({});
+
+  async function reload() {
+    try {
+      const r = await api.get<{ providers: OAuthProviderRow[] }>("/oauth/providers");
+      setProviders(r.providers || []);
+      setDrafts((prev) => {
+        const next = { ...prev };
+        for (const p of r.providers || []) {
+          if (p.id === "steam") continue;
+          if (!next[p.id]) {
+            next[p.id] = {
+              clientId: p.hasPanelConfig && p.clientId ? p.clientId : "",
+              clientSecret: "",
+              tenant: p.tenant || "common",
+            };
+          }
+        }
+        return next;
+      });
+    } catch (e: unknown) {
+      toast.error("Could not load providers", { message: errorMessage(e) });
+    }
+  }
+
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  function sourceLabel(p: OAuthProviderRow): string {
+    if (p.source === "panel") return "Panel";
+    if (p.source === "env") return "Environment (legacy)";
+    if (p.source === "mixed") return "Panel + env";
+    return "Not configured";
+  }
+
+  async function setEnabled(p: OAuthProviderRow, enabled: boolean) {
+    if (p.id !== "steam" && !p.configured && enabled) {
+      toast.error("Add client ID and secret before enabling");
+      return;
+    }
+    setBusyId(p.id);
+    try {
+      const next = await api.put<OAuthProviderRow>(`/oauth/providers/${p.id}`, { enabled });
+      setProviders((list) => list.map((x) => (x.id === p.id ? next : x)));
+      toast.success(enabled ? `${p.label} on login page` : `${p.label} hidden from login`);
+    } catch (e: unknown) {
+      toast.error("Toggle failed", { message: errorMessage(e) });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveOAuth2(p: OAuthProviderRow) {
+    const d = drafts[p.id] || { clientId: "", clientSecret: "", tenant: "common" };
+    if (!d.clientId.trim() && !d.clientSecret.trim() && !(p.id === "microsoft" && d.tenant.trim())) {
+      toast.error("Enter a client ID and secret");
+      return;
+    }
+    setBusyId(p.id);
+    try {
+      const body: Record<string, string | boolean> = { enabled: true };
+      if (d.clientId.trim()) body.clientId = d.clientId.trim();
+      if (d.clientSecret.trim()) body.clientSecret = d.clientSecret.trim();
+      if (p.id === "microsoft" && d.tenant.trim()) body.tenant = d.tenant.trim();
+      const next = await api.put<OAuthProviderRow>(`/oauth/providers/${p.id}`, body);
+      setProviders((list) => list.map((x) => (x.id === p.id ? next : x)));
+      setDrafts((prev) => ({
+        ...prev,
+        [p.id]: { clientId: next.clientId || d.clientId, clientSecret: "", tenant: next.tenant || d.tenant },
+      }));
+      toast.success(`${p.label} saved`, {
+        message: next.enabled
+          ? "Available on the login page now (no restart)."
+          : "Saved but toggled off — turn on the switch to show it on login.",
+      });
+    } catch (e: unknown) {
+      toast.error("Save failed", { message: errorMessage(e) });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function clearPanel(p: OAuthProviderRow) {
+    if (
+      !confirm(
+        `Remove panel settings for ${p.label}? Legacy environment values still apply if set. Prefer keeping credentials in the panel.`,
+      )
+    ) {
+      return;
+    }
+    setBusyId(p.id);
+    try {
+      const next = await api.put<OAuthProviderRow>(`/oauth/providers/${p.id}`, { clear: true });
+      setProviders((list) => list.map((x) => (x.id === p.id ? next : x)));
+      setDrafts((prev) => ({
+        ...prev,
+        [p.id]: { clientId: "", clientSecret: "", tenant: "common" },
+      }));
+      toast.success(`${p.label} panel settings cleared`);
+    } catch (e: unknown) {
+      toast.error("Clear failed", { message: errorMessage(e) });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (!can("user.manage")) {
+    return (
+      <div className="card">
+        <div className="muted">You need user.manage to configure sign-in providers.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid" style={{ gap: 16 }}>
+      <div className="card">
+        <h2>Sign-in providers</h2>
+        <div className="muted small">
+          Panel settings are the source of truth (encrypted in the database). The installer seeds the first provider via{" "}
+          <code>deploy/oauth-bootstrap.json</code>, which is imported on first start. Use the toggle to show or hide a
+          configured provider on the login page without deleting credentials.
+        </div>
+      </div>
+
+      {providers.map((p) => {
+        if (p.id === "steam") {
+          return (
+            <div key={p.id} className="card">
+              <div className="row" style={{ justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <div>
+                  <h2 style={{ margin: 0 }}>{p.label}</h2>
+                  <div className="muted small" style={{ marginTop: 4 }}>
+                    OpenID login (no client secret). Display names use the Steam Web API key under Admin → Steam when set.
+                  </div>
+                </div>
+                <div className="row" style={{ gap: 10, alignItems: "center" }}>
+                  <span className="muted small">{p.enabled ? "On login page" : "Hidden"}</span>
+                  <StatusToggle
+                    checked={p.enabled}
+                    disabled={busyId === p.id}
+                    onLabel="On"
+                    offLabel="Off"
+                    onChange={(next) => setEnabled(p, next)}
+                  />
+                </div>
+              </div>
+              <div className="tag" style={{ marginTop: 10, display: "block", wordBreak: "break-all" }}>
+                Callback: {p.callbackUrl}
+              </div>
+              <p className="muted small" style={{ margin: "8px 0 0" }}>
+                {sourceLabel(p)}
+                {p.hasEnvConfig && !p.hasPanelConfig ? " — prefer Enable here so it lives in the panel." : ""}
+              </p>
+              {p.hasPanelConfig && (
+                <div className="row" style={{ gap: 8, marginTop: 12 }}>
+                  <button className="btn small danger" disabled={busyId === p.id} onClick={() => clearPanel(p)}>
+                    Clear panel override
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        const d = drafts[p.id] || { clientId: "", clientSecret: "", tenant: "common" };
+        return (
+          <div key={p.id} className="card">
+            <div className="row" style={{ justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <div>
+                <h2 style={{ margin: 0 }}>{p.label}</h2>
+                <div className="muted small" style={{ marginTop: 4 }}>
+                  Register this callback URL in the provider’s OAuth app.
+                </div>
+              </div>
+              <div
+                className="row"
+                style={{ gap: 10, alignItems: "center" }}
+                title={!p.configured ? "Save credentials first" : undefined}
+              >
+                <span className="muted small">
+                  {!p.configured ? "Not configured" : p.enabled ? "On login page" : "Hidden"}
+                </span>
+                <StatusToggle
+                  checked={p.enabled}
+                  disabled={busyId === p.id || !p.configured}
+                  onLabel="On"
+                  offLabel="Off"
+                  title={!p.configured ? "Save credentials first" : undefined}
+                  onChange={(next) => setEnabled(p, next)}
+                />
+              </div>
+            </div>
+            <div className="tag" style={{ marginTop: 10, display: "block", wordBreak: "break-all" }}>
+              {p.callbackUrl}
+            </div>
+            <p className="muted small" style={{ margin: "8px 0 0" }}>
+              {sourceLabel(p)}
+              {p.hasEnvConfig && !p.hasPanelConfig
+                ? " — save below to move credentials into the panel (recommended)."
+                : ""}
+            </p>
+            <div className="grid cols-2" style={{ gap: 10, marginTop: 12 }}>
+              <div>
+                <label>Client ID</label>
+                <input
+                  value={d.clientId}
+                  onChange={(e) =>
+                    setDrafts((prev) => ({ ...prev, [p.id]: { ...d, clientId: e.target.value } }))
+                  }
+                  placeholder={p.clientId && p.source === "env" ? "Using env — paste to store in panel" : "OAuth client ID"}
+                  autoComplete="off"
+                />
+              </div>
+              <div>
+                <label>Client secret</label>
+                <input
+                  type="password"
+                  value={d.clientSecret}
+                  onChange={(e) =>
+                    setDrafts((prev) => ({ ...prev, [p.id]: { ...d, clientSecret: e.target.value } }))
+                  }
+                  placeholder={p.hasPanelConfig ? "Leave blank to keep current" : "OAuth client secret"}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+            {p.id === "microsoft" && (
+              <div style={{ marginTop: 10 }}>
+                <label>Tenant</label>
+                <input
+                  value={d.tenant}
+                  onChange={(e) =>
+                    setDrafts((prev) => ({ ...prev, [p.id]: { ...d, tenant: e.target.value } }))
+                  }
+                  placeholder="common"
+                  autoComplete="off"
+                />
+              </div>
+            )}
+            <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+              <button className="btn primary small" disabled={busyId === p.id} onClick={() => saveOAuth2(p)}>
+                Save
+              </button>
+              {p.hasPanelConfig && (
+                <button className="btn small danger" disabled={busyId === p.id} onClick={() => clearPanel(p)}>
+                  Clear panel settings
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -624,7 +903,7 @@ function Discord() {
               </a>
             ) : (
               <span className="muted small">
-                Set <code>OC_OAUTH_DISCORD_CLIENT_ID</code> to generate an invite link.
+                Configure Discord under Admin → Sign-in (or <code>OC_OAUTH_DISCORD_CLIENT_ID</code>) for an invite link.
               </span>
             )}
           </div>

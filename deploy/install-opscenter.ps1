@@ -137,7 +137,9 @@ function Configure-EnvInteractive([string]$Path) {
         Set-EnvValue $Path "OC_BOOTSTRAP_OWNERS" $owners
     }
 
-    $hasOAuth = $false
+    $bootstrapPath = Join-Path $PSScriptRoot "oauth-bootstrap.json"
+    $bootstrapImported = Join-Path $PSScriptRoot "oauth-bootstrap.json.imported"
+    $hasOAuth = (Test-Path $bootstrapPath) -or (Test-Path $bootstrapImported)
     foreach ($k in @("OC_OAUTH_DISCORD_CLIENT_ID", "OC_OAUTH_GOOGLE_CLIENT_ID", "OC_OAUTH_MICROSOFT_CLIENT_ID")) {
         if ($current[$k]) { $hasOAuth = $true; break }
     }
@@ -145,35 +147,44 @@ function Configure-EnvInteractive([string]$Path) {
 
     if (-not $hasOAuth) {
         Write-Host ""
-        Write-Host "OAuth provider (for panel sign-in)"
+        Write-Host "First OAuth provider (panel sign-in)"
+        Write-Host "  Credentials go into the panel database on first start (not control-plane.env)."
         Write-Host "  Redirect URI: $publicUrl/api/auth/oauth/<provider>/callback"
-        Write-Host "  1 = Discord  2 = Google  3 = Microsoft  4 = Skip (configure env manually)"
+        Write-Host "  1 = Discord  2 = Google  3 = Microsoft  4 = Skip (configure later in Admin → Sign-in)"
         $pick = Read-Host "Choose provider"
+        $bootstrap = $null
         switch ($pick) {
             "1" {
                 $id = Prompt-Required "Discord Client ID"
                 $secret = Prompt-Required "Discord Client Secret"
-                Set-EnvValue $Path "OC_OAUTH_DISCORD_CLIENT_ID" $id
-                Set-EnvValue $Path "OC_OAUTH_DISCORD_CLIENT_SECRET" $secret
+                $bootstrap = @{
+                    discord = @{ clientId = $id; clientSecret = $secret; enabled = $true }
+                }
             }
             "2" {
                 $id = Prompt-Required "Google Client ID"
                 $secret = Prompt-Required "Google Client Secret"
-                Set-EnvValue $Path "OC_OAUTH_GOOGLE_CLIENT_ID" $id
-                Set-EnvValue $Path "OC_OAUTH_GOOGLE_CLIENT_SECRET" $secret
+                $bootstrap = @{
+                    google = @{ clientId = $id; clientSecret = $secret; enabled = $true }
+                }
             }
             "3" {
                 $id = Prompt-Required "Microsoft Client ID"
                 $secret = Prompt-Required "Microsoft Client Secret"
-                Set-EnvValue $Path "OC_OAUTH_MICROSOFT_CLIENT_ID" $id
-                Set-EnvValue $Path "OC_OAUTH_MICROSOFT_CLIENT_SECRET" $secret
+                $bootstrap = @{
+                    microsoft = @{ clientId = $id; clientSecret = $secret; tenant = "common"; enabled = $true }
+                }
             }
             default {
-                Write-Host "Skipping OAuth prompts - edit $Path before signing in."
+                Write-Host "Skipping OAuth — after first Owner, add providers under Admin → Sign-in."
             }
         }
+        if ($bootstrap) {
+            ($bootstrap | ConvertTo-Json -Depth 5) | Set-Content -Path $bootstrapPath -Encoding UTF8
+            Write-Host "Wrote $bootstrapPath (imported into the panel DB on first start, then renamed)."
+        }
     } else {
-        Write-Host "OAuth provider already configured in env."
+        Write-Host "OAuth provider already configured (bootstrap file or legacy env)."
     }
 }
 

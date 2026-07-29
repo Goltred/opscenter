@@ -52,13 +52,13 @@ http://localhost:8080/api/auth/oauth/discord/callback
 
 1. Open the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**
 2. **OAuth2** → add the redirect URI above
-3. Copy **Client ID** and **Client Secret** into `deploy/control-plane.env`
+3. Copy **Client ID** and **Client Secret** — the one-click installer stores them for panel import (`deploy/oauth-bootstrap.json`), or paste them later under **Admin → Sign-in**
 4. Enable Discord **Developer Mode** (Settings → Advanced), right-click your avatar → **Copy User ID**
 5. Set `OC_BOOTSTRAP_OWNERS=discord:YOUR_USER_ID` so your first sign-in becomes **Owner**
 
-Google / Microsoft work the same idea: create an OAuth client, add the matching callback path (`…/google/callback` or `…/microsoft/callback`), paste ID/secret, and use `google:…` / `microsoft:…` in the bootstrap list as documented by each provider’s subject id.
+Google / Microsoft work the same idea: create an OAuth client, add the matching callback path (`…/google/callback` or `…/microsoft/callback`), paste ID/secret into the panel (or installer bootstrap), and use `google:…` / `microsoft:…` in the bootstrap Owner list.
 
-If bootstrap is wrong or empty, every account stays **pending** and nobody can approve anyone — fix the env and restart the panel.
+If bootstrap Owner is wrong or empty, every account stays **pending** and nobody can approve anyone — fix `OC_BOOTSTRAP_OWNERS` and restart the panel.
 
 ---
 
@@ -76,9 +76,9 @@ The script will:
 2. Install npm dependencies for `server/` and `web/`
 3. Create `deploy/control-plane.env` from the example if missing
 4. Generate **`OC_SECRETS_KEY`** if unset
-5. Prompt for **panel URL**, **OAuth provider**, and **bootstrap Owner** identity
+5. Prompt for **panel URL**, **first OAuth provider** (written to `deploy/oauth-bootstrap.json`), and **bootstrap Owner** identity
 6. **Build** the host agent into `agent-csharp/publish/` (or unpack a zip you pass in)
-7. Start the panel and open **http://localhost:8080**
+7. Start the panel (imports OAuth bootstrap into the DB), then open **http://localhost:8080**
 
 ### Host agent binary
 
@@ -131,11 +131,21 @@ OC_DEV_MODE=true
 
 # First Owner — provider:subject (see OAuth section above)
 OC_BOOTSTRAP_OWNERS=discord:YOUR_DISCORD_USER_ID
-
-# At least one OAuth provider, e.g. Discord:
-OC_OAUTH_DISCORD_CLIENT_ID=...
-OC_OAUTH_DISCORD_CLIENT_SECRET=...
 ```
+
+Then either:
+
+- Create `deploy/oauth-bootstrap.json` (imported on first panel start), e.g.:
+
+```json
+{
+  "discord": { "clientId": "...", "clientSecret": "...", "enabled": true }
+}
+```
+
+- Or start with no providers, sign in is impossible until you add credentials — prefer the bootstrap file or installer. After you are Owner, manage providers under **Admin → Sign-in**.
+
+Legacy `OC_OAUTH_*` env vars still work as a fallback.
 
 ### 3. Host agent package (required before adding hosts)
 
@@ -216,7 +226,7 @@ Day-to-day operations (hosts, mods, profiles, headless) are in **[SETUP.md](SETU
 
 | Problem | Fix |
 |---------|-----|
-| No OAuth providers on login | Set client ID/secret in `control-plane.env`, restart panel |
+| No OAuth providers on login | Ensure `oauth-bootstrap.json` was imported, or add providers under Admin → Sign-in. Legacy `OC_OAUTH_*` in env still works (restart after env changes) |
 | Stuck on pending approval | Add your `provider:subject` to `OC_BOOTSTRAP_OWNERS`, restart, sign in again. If nobody is Owner yet, only the env can unblock you. |
 | OAuth redirect mismatch | Callback URL in the provider app must exactly match `OC_PUBLIC_URL` + `/api/auth/oauth/{provider}/callback` |
 | Agent package unavailable | Run `dotnet publish` in `agent-csharp` (or supply `-AgentZip`) |

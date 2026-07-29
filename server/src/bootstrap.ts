@@ -1,5 +1,6 @@
 import { getDb } from "./db.js";
 import { parseBootstrapOwners } from "./auth/oauth.js";
+import { importOAuthBootstrapFile } from "./auth/oauthProviders.js";
 import { SEED_ROLES } from "./rbac.js";
 import { v4 as uuid } from "uuid";
 
@@ -26,6 +27,8 @@ export async function bootstrap(): Promise<void> {
     );
     for (const p of role.permissions) insertPerm.run(existing.id, p);
   }
+
+  importOAuthBootstrapFile();
 
   const owners = parseBootstrapOwners();
   if (owners.length === 0) {

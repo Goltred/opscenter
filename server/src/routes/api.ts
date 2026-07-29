@@ -30,6 +30,11 @@ import { agentPackageAvailable, buildAgentJson, streamAgentPackageZip } from "..
 import { buildSetupStatus, dismissSetup, agentGatewayUrl } from "../setup.js";
 import { encryptSecret } from "../secrets.js";
 import { saveSteamWebApiKey, steamWebApiKeyPublic } from "../steam/webApiKey.js";
+import {
+  oauthProvidersPublic,
+  saveOAuthProvider,
+  type OAuthProviderId,
+} from "../auth/oauthProviders.js";
 import { normalizeDlcCodes } from "../arma/dlcs.js";
 import {
   isDefaultModsLibrary,
@@ -4266,6 +4271,29 @@ apiRouter.put("/steam/web-api-key", requirePerm("steam.config"), (req: AuthedReq
   const status = saveSteamWebApiKey({ apiKey, clear });
   audit(req, clear ? "steam.web_api_key.clear" : "steam.web_api_key.save", "settings", "ok");
   res.json(status);
+});
+
+apiRouter.get("/oauth/providers", requirePerm("user.manage"), (_req, res) => {
+  res.json({ providers: oauthProvidersPublic() });
+});
+
+apiRouter.put("/oauth/providers/:id", requirePerm("user.manage"), (req: AuthedRequest, res) => {
+  const id = String(req.params.id || "").toLowerCase() as OAuthProviderId;
+  const allowed: OAuthProviderId[] = ["discord", "google", "microsoft", "steam", "epic"];
+  if (!allowed.includes(id)) return res.status(400).json({ error: "unknown provider" });
+  try {
+    const next = saveOAuthProvider(id, {
+      clear: !!req.body?.clear,
+      clientId: req.body?.clientId,
+      clientSecret: req.body?.clientSecret,
+      tenant: req.body?.tenant,
+      enabled: req.body?.enabled,
+    });
+    audit(req, req.body?.clear ? "oauth.provider.clear" : "oauth.provider.save", id, "ok");
+    res.json(next);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : "save failed" });
+  }
 });
 
 apiRouter.get("/discord/config", requirePerm("discord.config"), (_req, res) => {
