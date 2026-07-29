@@ -43,6 +43,8 @@ docs/            Install, day-to-day setup, security notes (see docs/README.md)
 
 Full guide: **[docs/INSTALL.md](docs/INSTALL.md)**. Contributing: **[CONTRIBUTING.md](CONTRIBUTING.md)**. Doc map: **[docs/README.md](docs/README.md)**.
 
+Repo: [github.com/Goltred/opscenter](https://github.com/Goltred/opscenter)
+
 ### Quick install (Windows)
 
 Prerequisites: **Node.js 20+**. **.NET 8 SDK** to build the host agent on the panel machine (recommended for a fresh clone).

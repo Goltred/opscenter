@@ -65,12 +65,10 @@ If bootstrap is wrong or empty, every account stays **pending** and nobody can a
 ## Option A — One-click install (Windows)
 
 ```powershell
-git clone <your-repo-url> OpsCenter
+git clone https://github.com/Goltred/opscenter.git OpsCenter
 cd OpsCenter
 .\deploy\install-opscenter.ps1
 ```
-
-Replace `<your-repo-url>` with this repository’s clone URL once it is on GitHub.
 
 The script will:
 
@@ -112,7 +110,7 @@ Or extract manually so `agent-csharp/publish/opscenter-agent.exe` exists, or set
 ### 1. Clone and install dependencies
 
 ```powershell
-git clone <your-repo-url> OpsCenter
+git clone https://github.com/Goltred/opscenter.git OpsCenter
 cd OpsCenter
 npm run install:all
 ```

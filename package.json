@@ -4,6 +4,14 @@
   "version": "0.1.0",
   "description": "Self-hosted control panel for dedicated game servers (Node panel + .NET host agent)",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Goltred/opscenter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Goltred/opscenter/issues"
+  },
+  "homepage": "https://github.com/Goltred/opscenter#readme",
   "engines": {
     "node": ">=20"
   },
