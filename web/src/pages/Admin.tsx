@@ -59,7 +59,7 @@ function Users() {
         <h2>Access model</h2>
         <div className="muted small">
           Users sign in with OAuth (Discord, Google, Microsoft, Steam, Epic). New accounts stay pending until you approve them and assign a role.
-          Owners are seeded via <code>A3P_BOOTSTRAP_OWNERS</code> (provider:subject allowlist).
+          Owners are seeded via <code>OC_BOOTSTRAP_OWNERS</code> (provider:subject allowlist).
         </div>
       </div>
       {pending.length > 0 && (
@@ -235,7 +235,7 @@ function Steam() {
       <div className="card">
         <h2>Add Steam account</h2>
         <div className="muted small">
-          Passwords are encrypted at rest on the panel (<code>A3P_SECRETS_KEY</code>).
+          Passwords are encrypted at rest on the panel (<code>OC_SECRETS_KEY</code>).
           The agent receives them only for each SteamCMD job over the WebSocket — nothing needs to go in <code>agent.json</code>.
           Prefer <code>wss://</code> for the agent gateway in production.
         </div>
@@ -456,7 +456,7 @@ function Discord() {
               </a>
             ) : (
               <span className="muted small">
-                Set <code>A3P_OAUTH_DISCORD_CLIENT_ID</code> to generate an invite link.
+                Set <code>OC_OAUTH_DISCORD_CLIENT_ID</code> to generate an invite link.
               </span>
             )}
           </div>

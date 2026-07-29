@@ -4,7 +4,7 @@ import { api, Job } from "../api";
 import { linkifyText } from "./linkify";
 import { useModNameMap } from "../useModNameMap";
 
-const STORAGE_KEY = "a3panel.activeActionsOpen";
+const STORAGE_KEY = "OpsCenter.activeActionsOpen";
 const POLL_MS = 4000;
 
 function kindLabel(job: Job): string {

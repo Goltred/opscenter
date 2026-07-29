@@ -333,7 +333,7 @@ apiRouter.post("/hosts/:id/prepare", requirePerm("host.add"), async (req: Authed
           result,
           bootstrap: result.data,
           error:
-            "Arma dedicated server is not installed, and SteamCMD is missing on the host. Install SteamCMD, set steamCmdPath in agent.json, then Prepare again to download the creatordlc branch.",
+            "Arma dedicated server is not installed, and SteamCMD is missing on the host. Install SteamCMD on the game host, set the SteamCMD path in Agent setup, then Verify host again to download the dedicated server (Creator DLC branch).",
         });
       }
       let creds;
@@ -346,7 +346,7 @@ apiRouter.post("/hosts/:id/prepare", requirePerm("host.add"), async (req: Authed
           bootstrap: result.data,
           error:
             (e instanceof Error ? e.message : "Steam account required") +
-            " Add one under Admin → Steam so Prepare can download the creatordlc dedicated server.",
+            " Add one under Admin → Steam so Verify host can download the dedicated server (Creator DLC branch).",
         });
       }
       const jobId = startCreatorDlcServerInstall(req, hostId, creds, !!req.body?.validate, "prepare");
@@ -356,7 +356,7 @@ apiRouter.post("/hosts/:id/prepare", requirePerm("host.add"), async (req: Authed
         result: {
           ...result,
           message:
-            "Folders ready; downloading Arma 3 dedicated server (creatordlc) into armaRoot via SteamCMD…",
+            "Folders ready; downloading Arma 3 dedicated server (Creator DLC branch) into armaRoot…",
         },
         bootstrap: result.data,
       });
@@ -592,7 +592,7 @@ async function runInstanceControlCore(opts: InstanceControlOpts): Promise<Instan
           status: 409,
           error:
             `Arma 3 dedicated server is not installed at ${String(host.arma_root || "armaRoot")}. ` +
-            "Use Prepare host (or Apply a Mission Profile) to download the creatordlc branch via SteamCMD.",
+            "Use Verify host (or Apply a Mission Profile) to download the dedicated server (Creator DLC branch).",
         };
       }
     } catch {
@@ -1271,8 +1271,8 @@ apiRouter.get("/instances/:id/logs", (req: AuthedRequest, res) => {
     res.write(
       `data: ${JSON.stringify({
         line: hub.isOnline(hostId)
-          ? "[a3panel] live console on — waiting for Arma RPT lines…"
-          : "[a3panel] agent offline — connect the host agent to stream logs",
+          ? "[OpsCenter] live console on — waiting for Arma RPT lines…"
+          : "[OpsCenter] agent offline — connect the host agent to stream logs",
       })}\n\n`,
     );
   }
@@ -2091,7 +2091,7 @@ async function writeProfileConfigToHost(
     effectiveRemoteHcIps(inst),
   );
   if (!String(mergedCfg.hostname || "").trim()) {
-    mergedCfg.hostname = String(profile.name || "A3Panel Server");
+    mergedCfg.hostname = String(profile.name || "OpsCenter Server");
   }
   const forcedDifficulty = normalizeForcedDifficulty(mergedCfg.forcedDifficulty);
   const missionTemplate = resolveProfileMissionTemplate(profile);

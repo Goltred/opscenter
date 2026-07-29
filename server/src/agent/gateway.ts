@@ -63,7 +63,7 @@ function scheduleBootstrapRefresh(hostId: string) {
 export function startAgentGateway(port: number): http.Server {
   const server = http.createServer((_req, res) => {
     res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("a3panel agent gateway\n");
+    res.end("OpsCenter agent gateway\n");
   });
   const wss = new WebSocketServer({ server, path: "/agent/connect" });
   const hub = getHub();

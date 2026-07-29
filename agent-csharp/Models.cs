@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace A3Panel.Agent;
+namespace OpsCenter.Agent;
 
 public sealed class AgentConfig
 {

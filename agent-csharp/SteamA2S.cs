@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
-namespace A3Panel.Agent;
+namespace OpsCenter.Agent;
 
 /// <summary>Result of a Steam A2S_INFO query (what the launcher / Steam browser sees).</summary>
 public sealed class A2SInfoResult

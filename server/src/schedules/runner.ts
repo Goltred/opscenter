@@ -72,7 +72,7 @@ export async function enterAwaitingConfirm(row: ScheduleRow): Promise<void> {
     const mins = Math.max(1, Math.round((new Date(row.run_at).getTime() - Date.now()) / 60_000));
     await notifyScheduleChannel(
       row,
-      `⏰ **Confirm needed** for **${row.name || "operation"}** in ~${mins} min.\nConfirm in A3Panel → Scheduler.`,
+      `⏰ **Confirm needed** for **${row.name || "operation"}** in ~${mins} min.\nConfirm in OpsCenter → Scheduler.`,
     );
   }
 }

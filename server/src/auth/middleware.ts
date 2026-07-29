@@ -3,7 +3,7 @@ import { getDb } from "../db.js";
 import type { Grant } from "../rbac.js";
 import { hashSessionId } from "./password.js";
 
-export const SESSION_COOKIE = "a3p_session";
+export const SESSION_COOKIE = "OC_session";
 
 export type UserRow = {
   id: string;

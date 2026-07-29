@@ -30,7 +30,7 @@ export type SetupStatus = {
   agentPackageMessage: string | null;
 };
 
-const SETUP_SETTINGS_KEY = "panel_setup";
+const SETUP_SETTINGS_KEY = "opscenter_setup";
 
 type SetupSettings = {
   dismissed?: boolean;
@@ -114,8 +114,8 @@ export function buildSetupStatus(): SetupStatus {
       label: "Owner allowlist configured",
       status: bootstrapOwnersConfigured ? "pass" : "warn",
       detail: bootstrapOwnersConfigured
-        ? "A3P_BOOTSTRAP_OWNERS is set"
-        : "Set A3P_BOOTSTRAP_OWNERS so the first sign-in becomes Owner.",
+        ? "OC_BOOTSTRAP_OWNERS is set"
+        : "Set OC_BOOTSTRAP_OWNERS so the first sign-in becomes Owner.",
     },
     {
       id: "agent-package",
@@ -149,11 +149,14 @@ export function buildSetupStatus(): SetupStatus {
 
   const complete =
     providerCount > 0 && pkg.ok && steamAccountCount > 0 && connectedHostCount > 0;
+  // Once a host row exists, stop forcing the first-run wizard / dashboard nudge.
+  // Remaining checks (Steam, agent online, package) live on host/admin surfaces.
+  const showWizard = !dismissed && !complete && hostCount === 0;
 
   return {
     checks,
     complete,
-    showWizard: !dismissed && !complete,
+    showWizard,
     dismissed,
     publicUrl: config.publicUrl,
     agentGatewayUrl: agentGatewayUrl(),

@@ -1,11 +1,16 @@
-# Reverse proxy for A3Panel. Replace a3panel.example.com with your domain;
+# Reverse proxy for OpsCenter. Replace opscenter.example.com with your domain;
 # Caddy will obtain and renew TLS automatically. For local testing use
 # `localhost` (Caddy issues an internal cert).
+#
+# This example terminates HTTPS for the panel HTTP port (:8080) only.
+# Agents dial OC_AGENT_ADDR (default :8443) separately — extend this file
+# (or another proxy) if you want wss:// for the agent gateway. See docs/SECURITY.md.
 
-a3panel.example.com {
+opscenter.example.com {
 	encode gzip
 
-	# Security headers (the control plane also sets these; belt-and-braces).
+	# Optional headers at the edge (the Node control plane does not ship a full
+	# HSTS/CSP suite by itself — treat these as your reverse-proxy layer).
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
@@ -14,13 +19,13 @@ a3panel.example.com {
 		-Server
 	}
 
-	# API + metrics + SSE go to the control plane.
+	# API + metrics go to the control plane.
 	@backend path /api/* /metrics
 	reverse_proxy @backend host.docker.internal:8080 {
 		flush_interval -1
 	}
 
-	# Everything else is the SPA (served by the control plane when A3P_WEB_DIR
+	# Everything else is the SPA (served by the control plane when OC_WEB_DIR
 	# is set, or serve the built web/dist directly here).
 	reverse_proxy host.docker.internal:8080
 }

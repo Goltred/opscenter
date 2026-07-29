@@ -179,7 +179,7 @@ export function Dashboard() {
         )}
       </div>
 
-      {panelSetup && !panelSetup.complete && (
+      {panelSetup?.showWizard && (
         <div className="warn-banner" style={{ marginBottom: 16 }}>
           Panel setup is not finished.{" "}
           <Link to="/setup">Resume setup wizard</Link>

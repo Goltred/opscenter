@@ -116,13 +116,18 @@ export function PanelSetupWizard() {
     if (stepIndex > 0) setStep(STEPS[stepIndex - 1].id);
   }
 
-  async function dismiss() {
+  /** Skip this step, or leave the wizard on the last step without finishing setup. */
+  async function skipForNow() {
+    if (stepIndex < STEPS.length - 1) {
+      goNext();
+      return;
+    }
     setDismissing(true);
     try {
       await api.post("/setup/dismiss");
       navigate("/", { replace: true });
     } catch (e: unknown) {
-      toast.error("Could not skip setup", { message: errorMessage(e) });
+      toast.error("Could not leave setup", { message: errorMessage(e) });
     } finally {
       setDismissing(false);
     }
@@ -197,8 +202,12 @@ export function PanelSetupWizard() {
               connected game host.
             </p>
           </div>
-          <button type="button" className="btn small" disabled={dismissing} onClick={() => void dismiss()}>
-            {dismissing ? "Skipping…" : "Skip for now"}
+          <button type="button" className="btn small" disabled={dismissing} onClick={() => void skipForNow()}>
+            {dismissing
+              ? "Leaving…"
+              : stepIndex < STEPS.length - 1
+                ? "Skip for now"
+                : "Skip and go to dashboard"}
           </button>
         </div>
 
@@ -234,7 +243,7 @@ export function PanelSetupWizard() {
             {step === "welcome" && (
               <div className="grid" style={{ gap: 12 }}>
                 <p className="muted small" style={{ margin: 0 }}>
-                  A3Panel runs on this machine. Game hosts run a small agent that dials out to the panel — no inbound
+                  OpsCenter runs on this machine. Game hosts run a small agent that dials out to the panel — no inbound
                   ports on your home network.
                 </p>
                 <p className="muted small" style={{ margin: 0 }}>
@@ -270,15 +279,17 @@ export function PanelSetupWizard() {
                   <ol className="setup-instructions" style={{ margin: 0 }}>
                     <li>
                       <strong>Build locally</strong> — from the repo root:{" "}
-                      <code>dotnet publish -c Release -o agent-csharp/publish</code> (requires .NET 8 SDK)
+                      <code>dotnet publish -c Release -o agent-csharp/publish</code> (requires .NET 8 SDK). Recommended
+                      for a fresh clone.
                     </li>
                     <li>
-                      <strong>Pre-built artifact</strong> — download the agent zip from GitHub Releases, extract to{" "}
-                      <code>agent-csharp/publish</code>, or set <code>A3P_AGENT_DIST_DIR</code> in{" "}
-                      <code>deploy/control-plane.env</code>
+                      <strong>Optional pre-built zip</strong> — if you already have an agent zip, extract it to{" "}
+                      <code>agent-csharp/publish</code> (must include <code>opscenter-agent.exe</code>), or set{" "}
+                      <code>OC_AGENT_DIST_DIR</code> / pass <code>-AgentZip</code> to{" "}
+                      <code>deploy\install-opscenter.ps1</code>
                     </li>
                     <li>
-                      <strong>One-click install</strong> — run <code>deploy\install-panel.ps1</code> (builds the agent
+                      <strong>One-click install</strong> — run <code>deploy\install-opscenter.ps1</code> (builds the agent
                       unless you pass <code>-AgentZip</code>)
                     </li>
                   </ol>
@@ -316,7 +327,7 @@ export function PanelSetupWizard() {
               <div className="grid" style={{ gap: 12 }}>
                 <p className="muted small" style={{ margin: 0 }}>
                   These addresses must match how operators and game hosts reach the panel. Change them in{" "}
-                  <code>deploy/control-plane.env</code> before going to production.
+                  <code>deploy/control-plane.env</code> and restart before going to production.
                 </p>
                 <div className="kv">
                   <div>Panel URL</div>
@@ -326,6 +337,18 @@ export function PanelSetupWizard() {
                   <div>OAuth callback (example)</div>
                   <div className="tag">{status?.oauthCallbackExample}</div>
                 </div>
+                {(status?.publicUrl || "").includes("localhost") || (status?.publicUrl || "").includes("127.0.0.1") ? (
+                  <div className="warn-banner">
+                    Panel URL is localhost — fine when the game host is this same machine. If the agent runs on another
+                    PC, set <code>OC_PUBLIC_URL</code> to a hostname or LAN/public IP the game host can reach, restart
+                    the panel, and download a new agent package.
+                  </div>
+                ) : (
+                  <p className="muted small" style={{ margin: 0 }}>
+                    Game hosts dial this agent gateway (default port 8443). Open that port on the panel firewall; game
+                    hosts only need outbound access.
+                  </p>
+                )}
                 <p className="muted small" style={{ margin: 0 }}>
                   Register the callback URL in your OAuth app (Discord, Google, etc.). For production, use HTTPS on the
                   panel and <code>wss://</code> for the agent gateway.

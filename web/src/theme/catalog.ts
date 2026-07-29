@@ -12,9 +12,9 @@ export type ThemeOption = {
 /** Locked product brand. */
 export const PRODUCT_BRAND = {
   mark: "Ops",
-  accentPart: "Control",
-  tagline: "Arma server operations",
-  fullName: "OpsControl",
+  accentPart: "Center",
+  tagline: "Dedicated server operations",
+  fullName: "OpsCenter",
 } as const;
 
 export const THEMES: ThemeOption[] = [
@@ -68,7 +68,7 @@ export const THEMES: ThemeOption[] = [
   },
 ];
 
-const THEME_KEY = "opscontrol.theme";
+const THEME_KEY = "opscenter.theme";
 const THEME_KEY_LEGACY = "a3p.preview.theme";
 
 export function readStoredTheme(): ThemeId {

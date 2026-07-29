@@ -4,9 +4,9 @@ import { ZipArchive } from "archiver";
 import type { Response } from "express";
 import { config } from "./config.js";
 
-/** Directory with published a3panel-agent.exe (+ deps). Override with A3P_AGENT_DIST_DIR. */
+/** Directory with published opscenter-agent.exe (+ deps). Override with OC_AGENT_DIST_DIR. */
 export function agentDistDir(): string {
-  const fromEnv = process.env.A3P_AGENT_DIST_DIR?.trim();
+  const fromEnv = process.env.OC_AGENT_DIST_DIR?.trim();
   if (fromEnv) return path.resolve(fromEnv);
   return config.agentDistDir;
 }
@@ -14,8 +14,8 @@ export function agentDistDir(): string {
 export function resolveAgentExe(): string | null {
   const dir = agentDistDir();
   const candidates = [
-    path.join(dir, "a3panel-agent.exe"),
-    path.join(config.repoRoot, "agent-csharp", "bin", "Release", "net8.0", "a3panel-agent.exe"),
+    path.join(dir, "opscenter-agent.exe"),
+    path.join(config.repoRoot, "agent-csharp", "bin", "Release", "net8.0", "opscenter-agent.exe"),
   ];
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
@@ -34,7 +34,7 @@ export function agentPackageAvailable(): { ok: boolean; dir: string; exe: string
       message:
         `Agent binary not found under ${dir}. On the panel machine run: ` +
         `dotnet publish -c Release -o ../agent-csharp/publish (from agent-csharp), ` +
-        `or set A3P_AGENT_DIST_DIR to a folder containing a3panel-agent.exe.`,
+        `or set OC_AGENT_DIST_DIR to a folder containing opscenter-agent.exe.`,
     };
   }
   return { ok: true, dir, exe };
@@ -63,17 +63,17 @@ export function buildAgentJson(fields: AgentJsonFields): string {
 
 function buildReadme(hostName: string): string {
   return [
-    `A3Panel host agent package — ${hostName}`,
+    `OpsCenter host agent package — ${hostName}`,
     ``,
-    `1. Extract this zip anywhere on the game host (e.g. C:\\a3panel-agent).`,
+    `1. Extract this zip anywhere on the game host (e.g. C:\\opscenter-agent).`,
     `2. Edit agent.json if needed (armaRoot, steamCmdPath).`,
     `3. Ensure SteamCMD is installed at steamCmdPath.`,
-    `4. Run a3panel-agent.exe.`,
+    `4. Run opscenter-agent.exe.`,
     `5. Return to the panel and wait until the host shows "agent connected".`,
     ``,
     `Optional Windows service (Admin PowerShell), from the extract folder:`,
-    `  New-Service -Name A3PanelAgent -BinaryPathName "$pwd\\a3panel-agent.exe" -StartupType Automatic`,
-    `  Start-Service A3PanelAgent`,
+    `  New-Service -Name OpsCenterAgent -BinaryPathName "$pwd\\opscenter-agent.exe" -StartupType Automatic`,
+    `  Start-Service OpsCenterAgent`,
     ``,
     `The enroll token in agent.json is one-time. After the first successful connect it is consumed.`,
     ``,
@@ -107,7 +107,7 @@ export async function streamAgentPackageZip(
     throw new Error(avail.message || "agent binary missing");
   }
   const distDir = avail.dir;
-  const filename = opts.downloadName || `a3panel-agent-${opts.hostName.replace(/[^\w.-]+/g, "_")}.zip`;
+  const filename = opts.downloadName || `opscenter-agent-${opts.hostName.replace(/[^\w.-]+/g, "_")}.zip`;
 
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);

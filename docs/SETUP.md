@@ -1,92 +1,105 @@
-# A3Panel Setup Guide
+# OpsCenter setup (day-to-day)
 
-**Installing the panel for the first time?** Start with **[INSTALL.md](INSTALL.md)** (one-click script or manual steps, OAuth, agent binary, setup wizard).
+**Installing the panel for the first time?** Use **[INSTALL.md](INSTALL.md)** — OAuth, Owner bootstrap, agent binary, networking, and the first-run wizard live there.
 
-This guide covers **day-to-day operations** after the panel is running.
+This guide is for **after** the panel is running and at least one host can connect.
 
-A3Panel has three deployable pieces:
+## Typical flow
 
-1. **Control plane** (`server/`) — Node.js API + agent gateway + optional static SPA.
-2. **Host agent** (`agent-csharp/`) — .NET 8 Windows worker; **dials out** to the gateway (NAT-friendly).
-3. **Web UI** (`web/`) — React SPA (served by the control plane or Vite in dev).
+1. Host agent connected (INSTALL / Agent setup → **Verify**)
+2. **Add instance** on the Dashboard host card
+3. Add mods to the **Mods** library; download files via host **Mods & server**
+4. Create a **Mission Profile** (and optional difficulty / mission / modlist)
+5. **Apply** the profile to the instance, then start from Dashboard or the instance page
 
-## Connection model
+---
 
-Game hosts (home or VPS) run the agent, which opens an **outbound** WebSocket to the panel.
-The panel never needs to dial into the agent. A host is **online / agent connected** when that
-session is up. Commands (start/stop, SteamCMD, bootstrap, …) ride that session.
+## Hosts and instances
 
-## Prerequisites
+### Hosts
 
-- Node.js 20+
-- .NET 8 SDK (agent hosts only)
-- (Per game host) SteamCMD and/or ability for the agent to locate/install it; an Arma 3
-  dedicated server tree (or install separately), plus a Steam account that **owns Arma 3**.
+- **Dashboard → Add host** (or Agent setup on an existing host) — paths, Steam account, download package, run agent, **Verify**.
+- Host card **online** = agent connected.
+- **Edit host** — Arma root, SteamCMD path, optional shared mods folder, optional **Reachable address** (only needed for cross-host headless; see below).
+- Rebuild the panel-side agent binary when you change agent code: see INSTALL (or `dotnet publish` in `agent-csharp/`).
 
-## 1. Database
+### Instances
 
-SQLite is embedded. Set `A3P_DATABASE_URL` (default `deploy/a3panel.sqlite`). Schema applies on boot.
+An **instance** is one dedicated-server process (port + profile dir) on a host.
 
-## 2. Control plane + UI
+1. On the Dashboard host card, use **Add instance** (name + game port).
+2. Open the instance from the host card or `/instances/:id`.
+3. Start / stop / restart from the Dashboard or the instance page (agent must be online).
+4. Apply a Mission Profile before the first useful start so config, mods, and mission are in place.
 
-See **[INSTALL.md](INSTALL.md)** for install and first-run wizard. Quick start:
+### Browse files
 
-```powershell
-npm start
-```
+Dashboard host card → **Browse files** — navigate and delete under the host Arma root (and related roots the agent allows). There is no Steam “uninstall mod” button; remove files here if you need to clear an install.
 
-First-time Windows install: `.\deploy\install-panel.ps1`
+---
 
-Env highlights:
+## Mods: library vs host files
 
-- `A3P_PUBLIC_URL` — used for OAuth redirect URIs (`{url}/api/auth/oauth/{provider}/callback`)
-- `A3P_BOOTSTRAP_OWNERS` — comma-separated `provider:subject` (e.g. `discord:123…`). Matching logins become **Owner**.
-- OAuth client IDs/secrets: `A3P_OAUTH_DISCORD_*`, `A3P_OAUTH_GOOGLE_*`, `A3P_OAUTH_MICROSOFT_*`, `A3P_OAUTH_STEAM=1`, `A3P_OAUTH_EPIC_*`
-- `A3P_AGENT_ADDR` (default `:8443`) — agents connect here
-- `A3P_SECRETS_KEY` (optional) — encrypts SteamCMD passwords in SQLite
+| Surface | Job |
+|---------|-----|
+| **Mods** (nav) | Panel **library** — workshop IDs/titles you attach to profiles and modlists |
+| **Modlists** | Import Arma Launcher `modlist.html`; attach on Mission Profiles |
+| **Dashboard → host → Mods & server** | Download/update files **on that host**, update dedicated server (Creator DLC), live job console |
 
-### Authentication
+Workflow: add entries under **Mods** (search or workshop ID) → on the host, open **Mods & server** to download what the host is missing → attach mods on a profile → **Apply**.
 
-- **No email/password.** Sign-in is OAuth only (Discord, Google, Microsoft, Steam, Epic — whichever you configure).
-- New users are created on first login but stay **pending** until an Owner approves them and assigns a role (Admin → Users).
-- First Owner: put your identity in `A3P_BOOTSTRAP_OWNERS`, configure at least one provider, sign in.
+Steam account: **Admin → Steam** (encrypted on the panel; sent to the agent per job only). Prefer `wss://` outside a trusted LAN — see [SECURITY.md](SECURITY.md).
 
-## 3. Host agent enrollment
+Shared mods folder (Edit host): read-only library the agent never writes into. Missing mods download into the host’s local workshop tree under Arma root.
 
-1. Dashboard → **Add host** opens the agent setup wizard (same wizard as **Agent setup** on an existing host).
-2. **Host settings** creates/saves the host (name, armaRoot, steamCmdPath, …), then continue: Steam → download package → install & run → Verify.
-3. When connected, the host card shows **agent connected**. Verify creates folders and can install the dedicated server if missing.
+---
 
-The panel serves the agent zip from `agent-csharp/publish` (override with `A3P_AGENT_DIST_DIR`). Optional Windows service steps are in `README.txt` inside the zip.
+## Missions, difficulties, profiles
 
-To rebuild the agent binary on the panel machine:
+- **Missions** — upload / manage mission PBOs used by profiles.
+- **Difficulties** — reusable difficulty presets; Custom writes `Users/server/server.Arma3Profile` on apply.
+- **Mission Profiles** — difficulty, Creator DLC checkboxes, workshop mods, mission, optional recommended local HC count.
+  - **Apply** on an instance expands Workshop required items when needed and writes server.cfg / keys.
+  - Start/restart reuse a persisted resolved mod list when present; optional **Refresh Steam Workshop dependencies** on apply.
+  - Better dependency lookups: set `OC_OAUTH_STEAM_API_KEY` in `control-plane.env`.
+  - Mod titles: Mods → **Refresh titles**.
+- **Shared server.cfg** (on Profiles) — passwords, admins, BattlEye, etc. for the selected instance; profile overrides win.
+- **Keys** — on apply/start, `.bikey` files from loaded workshop mods copy into `{armaRoot}\keys\`. Instance page: **Sync mod keys**. Extra keys: Mods → Signature keys → **Push signature keys** on the instance.
 
-```powershell
-cd agent-csharp
-dotnet publish -c Release -o publish
-```
+Official BI content (Contact, Apex, …) does not need a separate `-mod=` code; it comes with the dedicated / Creator DLC install. Players still need ownership where Steam requires it.
 
-## 4. Steam accounts / SteamCMD / instances
+If the dedicated server binary is missing under Arma root, **Verify host** or **Apply profile** can install Steam’s Creator DLC dedicated branch (SteamCMD must already be on the game host).
 
-- **Admin → Steam** — add Steam username/password once (encrypted at rest). Required for mod downloads and server install/updates.
-- You do **not** need a pre-installed Arma dedicated server. **Prepare host** or **Apply profile** detects a missing `arma3server_x64.exe` / `arma3server.exe` under the configured path and runs `app_update 233780 -beta creatordlc`.
-- **Dashboard → host card → Edit** — optional **shared mods library** path (read-only). Supports `{workshopId}` folders and `@ModName` junctions (via `meta.cpp` `publishedid`). The panel/agent **never write into this folder**. On apply, missing mods can be SteamCMD’d into the **local** `{armaRoot}\steamapps\workshop\…` tree; local `armaRoot\mods\` junctions may be created pointing at shared folders. Launch prefers local workshop copies, then shared.
-- **Dashboard → host card → SteamCMD** — download mods, update dedicated server, live console.
-  - **Update server (Creator DLC)** runs `app_update 233780 -beta creatordlc` so CDLC folders (`vn`, `ws`, …) exist on the host.
-- Credentials are sent to the agent **per job** over the agent WebSocket; they are not stored on the host.
-- **Mission Profiles** — difficulty (`forcedDifficulty` + Custom → `Users/server/server.Arma3Profile`), Creator DLC checkboxes (`-mod=` codes), workshop mods, mission. Apply expands Steam Workshop **Required items** and **persists** the resolved list on the profile (30-day TTL; cleared when you edit mods). Start/restart reuse that list (no Steam). Optional **Refresh Steam Workshop dependencies** on apply bypasses caches. Set `A3P_OAUTH_STEAM_API_KEY` for batched dep lookups; without it, HTML scrape is a last resort. Mod titles use a 30-day DB cache — Mods → **Refresh titles** to update.
-- **Mission Profiles → Shared server.cfg** — passwords, `admins[]`, BattlEye, etc. for the selected instance; profile overrides win. Apply writes `class Missions` from the profile’s selected mission PBO (`template` without `.pbo`).
-- **Keys** — on profile apply (and start/restart), `.bikey` files from each loaded workshop mod are copied into `{armaRoot}\keys\` so `verifySignatures` accepts signed client content. Instance page also has **Sync mod keys**. For extra/manual keys, upload `.bikey` files under Mods → Signature keys, then **Push signature keys** on the instance.
-- **Instance start** uses the loaded profile: `-config=…/server.cfg`, `-name=server`, `-mod=` (DLC codes + paths from the host mods library), `-serverMod=` for server-only mods. Start fails clearly if the dedicated server binary is still missing (run Prepare host first).
-- **Headless clients** — **Local:** on the Instance page, set desired same-host HC count (0–8). **Remote / dedicated HC hosts:** Dashboard → host card → **Add headless group** (compact card: name, target instance, start/stop/restart). Cross-host needs a <strong>Reachable address</strong> on Edit host (game host = connect target; worker host = allowlist source IP). Panel syncs `headlessClients[]` automatically for managed groups. Missions must transfer AI to HCs; the panel only runs the processes. Profiles may store an optional **recommended** local HC count (Apply can optionally match it).
-- Official BI content (Contact, Apex, …) does **not** use a `-mod=` code; it comes with the dedicated server / creatordlc install. Players still need ownership where Steam requires it.
-- **Modlists** — import Arma Launcher `modlist.html`, attach on Mission Profiles.
-- **Dashboard / Instance** — start/stop/restart via the connected agent.
+---
 
-## Security
+## Headless clients
 
-- One-time enroll token, then host id identity on the WS session.
-- Panel RBAC before every dispatch; agent accepts only the typed op catalog.
-- OAuth-only panel login; Owners via `A3P_BOOTSTRAP_OWNERS`; new users pending until approved.
-- SteamCMD passwords encrypted at rest (`A3P_SECRETS_KEY` / `.a3p_secrets_key`); prefer TLS (`wss://`) on the agent gateway in production.
-- Prefer TLS on the panel HTTP front in production; plaintext WS is for local/dev only.
+- **Same machine:** Instance page → local HC count (0–8).
+- **Other machines:** Dashboard host card → **Add headless group** (name, target instance, start/stop/restart).
+- **Reachable address** (Edit host) — only when the HC and dedicated server are on **different** hosts (game host = connect target; worker host = allowlist source IP). Same-host HCs do not need it.
+- Missions must transfer AI to HCs; the panel only runs the processes.
+
+---
+
+## Schedules
+
+**Schedules** (nav) — apply a mission profile and start an instance at a chosen time. Confirm within the window shown in the UI (stand down / finish as needed).
+
+Optional Discord channel / requester IDs on a schedule work with **Admin → Discord** (bot). Panel Discord **login** is separate from the ops bot.
+
+---
+
+## Admin: users, roles, Steam, Discord
+
+- **Users** — approve pending OAuth accounts, disable, assign roles. First Owner comes from `OC_BOOTSTRAP_OWNERS` (INSTALL).
+- **Roles** — granular permissions (`host.add`, `instance.control`, `schedule.*`, …), optionally scoped to a host or instance.
+- **Steam** — credentials for installs and workshop downloads; Guard cache status after first successful Guard on the host.
+- **Discord** — optional bot for schedule reminders and slash commands (`/help` in Discord lists them). Configure token, guild, channels under Admin → Discord.
+- **Audit** — who did what in the panel.
+
+---
+
+## Security (pointer)
+
+Operational model and hardening checklist: **[SECURITY.md](SECURITY.md)**.  
+Vulnerability reports: root **[SECURITY.md](../SECURITY.md)**.

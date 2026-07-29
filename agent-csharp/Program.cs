@@ -1,5 +1,5 @@
 using System.Text.Json;
-using A3Panel.Agent;
+using OpsCenter.Agent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -25,7 +25,7 @@ if (string.IsNullOrWhiteSpace(cfg.HostId))
 }
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddWindowsService(o => o.ServiceName = "A3Panel Agent");
+builder.Services.AddWindowsService(o => o.ServiceName = "OpsCenter Agent");
 builder.Services.AddSingleton(cfg);
 builder.Services.AddHostedService<AgentWorker>();
 

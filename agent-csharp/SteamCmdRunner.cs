@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
-namespace A3Panel.Agent;
+namespace OpsCenter.Agent;
 
 public sealed class DownloadModPayload
 {

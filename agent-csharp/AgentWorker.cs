@@ -2,7 +2,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 
-namespace A3Panel.Agent;
+namespace OpsCenter.Agent;
 
 public sealed class AgentWorker : BackgroundService
 {

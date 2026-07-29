@@ -3,12 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpsControl — Arma server operations</title>
+    <title>OpsCenter — Dedicated server operations</title>
     <script>
       (function () {
         try {
           var themes = ["legacy", "steel-brief", "night-optics", "signal", "foundry", "range"];
-          var theme = localStorage.getItem("opscontrol.theme") || localStorage.getItem("a3p.preview.theme");
+          var theme =
+            localStorage.getItem("opscenter.theme") ||
+            localStorage.getItem("opscontrol.theme") ||
+            localStorage.getItem("a3p.preview.theme");
           if (!themes.includes(theme)) theme = "steel-brief";
           document.documentElement.setAttribute("data-theme", theme);
         } catch (e) {}

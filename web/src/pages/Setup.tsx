@@ -44,18 +44,30 @@ export function SetupPage() {
 function SetupRedirect() {
   const { can, loading: authLoading } = useAuth();
   const loc = useLocation();
-  const [status, setStatus] = useState<SetupStatus | null>(null);
+  /** Status is only valid for the path it was fetched for — avoids bounce after dismiss. */
+  const [state, setState] = useState<{ path: string; status: SetupStatus } | null>(null);
 
   useEffect(() => {
     if (authLoading || !can("host.add")) return;
+    const path = loc.pathname;
+    let cancelled = false;
     api
       .get<SetupStatus>("/setup/status")
-      .then(setStatus)
-      .catch(() => setStatus(null));
-  }, [authLoading, can]);
+      .then((status) => {
+        if (!cancelled) setState({ path, status });
+      })
+      .catch(() => {
+        if (!cancelled) setState(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, can, loc.pathname]);
 
   if (loc.pathname === "/setup") return null;
-  if (!can("host.add") || !status?.showWizard) return null;
+  if (!can("host.add")) return null;
+  if (!state || state.path !== loc.pathname) return null;
+  if (!state.status.showWizard) return null;
   return <Navigate to="/setup" replace />;
 }
 

@@ -23,11 +23,11 @@ function loadEnvFile(file) {
 }
 
 loadEnvFile(path.join(root, "deploy", "control-plane.env"));
-process.env.A3P_HTTP_ADDR ||= ":8080";
-process.env.A3P_PUBLIC_URL ||= "http://localhost:8080";
-process.env.A3P_WEB_ORIGIN ||= "http://localhost:5173";
-process.env.A3P_DEV_MODE ||= "true";
-process.env.A3P_DATABASE_URL ||= path.join(root, "deploy", "a3panel.sqlite");
+process.env.OC_HTTP_ADDR ||= ":8080";
+process.env.OC_PUBLIC_URL ||= "http://localhost:8080";
+process.env.OC_WEB_ORIGIN ||= "http://localhost:5173";
+process.env.OC_DEV_MODE ||= "true";
+process.env.OC_DATABASE_URL ||= path.join(root, "deploy", "OpsCenter.sqlite");
 
 for (const dir of ["server", "web"]) {
   if (!fs.existsSync(path.join(root, dir, "node_modules"))) {

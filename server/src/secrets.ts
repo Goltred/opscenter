@@ -10,7 +10,7 @@ let cachedKey: Buffer | null = null;
 function keyFilePath(): string {
   if (config.secretsKeyFile) return path.resolve(config.secretsKeyFile);
   const db = path.resolve(config.databaseUrl);
-  return path.join(path.dirname(db), ".a3p_secrets_key");
+  return path.join(path.dirname(db), ".oc_secrets_key");
 }
 
 /** 32-byte AES key from env or a persisted local key file. */
@@ -50,7 +50,7 @@ export function getSecretsKey(): Buffer {
   cachedKey = crypto.randomBytes(32);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, cachedKey.toString("base64"), { encoding: "utf8", mode: 0o600 });
-  console.warn(`A3P_SECRETS_KEY unset — generated and saved to ${file}`);
+  console.warn(`OC_SECRETS_KEY unset — generated and saved to ${file}`);
   return cachedKey;
 }
 

@@ -20,42 +20,42 @@ function envInt(key: string, fallback: number): number {
 }
 
 export const config = {
-  httpAddr: env("A3P_HTTP_ADDR", ":8080"),
-  publicUrl: env("A3P_PUBLIC_URL", "http://localhost:8080"),
-  devMode: envBool("A3P_DEV_MODE", true),
-  webOrigin: env("A3P_WEB_ORIGIN", "http://localhost:5173"),
-  webDir: env("A3P_WEB_DIR", path.join(repoRoot, "web", "dist")),
-  databaseUrl: env("A3P_DATABASE_URL", path.join(repoRoot, "deploy", "a3panel.sqlite")),
-  sessionTtlHours: envInt("A3P_SESSION_TTL_HOURS", 12),
+  httpAddr: env("OC_HTTP_ADDR", ":8080"),
+  publicUrl: env("OC_PUBLIC_URL", "http://localhost:8080"),
+  devMode: envBool("OC_DEV_MODE", true),
+  webOrigin: env("OC_WEB_ORIGIN", "http://localhost:5173"),
+  webDir: env("OC_WEB_DIR", path.join(repoRoot, "web", "dist")),
+  databaseUrl: env("OC_DATABASE_URL", path.join(repoRoot, "deploy", "OpsCenter.sqlite")),
+  sessionTtlHours: envInt("OC_SESSION_TTL_HOURS", 12),
   /** Comma-separated provider:subject — e.g. discord:123,steam:7656… */
-  bootstrapOwners: env("A3P_BOOTSTRAP_OWNERS", ""),
-  agentAddr: env("A3P_AGENT_ADDR", ":8443"),
-  secretsKey: env("A3P_SECRETS_KEY", ""),
-  secretsKeyFile: env("A3P_SECRETS_KEY_FILE", ""),
-  /** Folder with published a3panel-agent.exe (default: <repo>/agent-csharp/publish). */
-  agentDistDir: env("A3P_AGENT_DIST_DIR", path.join(repoRoot, "agent-csharp", "publish")),
+  bootstrapOwners: env("OC_BOOTSTRAP_OWNERS", ""),
+  agentAddr: env("OC_AGENT_ADDR", ":8443"),
+  secretsKey: env("OC_SECRETS_KEY", ""),
+  secretsKeyFile: env("OC_SECRETS_KEY_FILE", ""),
+  /** Folder with published opscenter-agent.exe (default: <repo>/agent-csharp/publish). */
+  agentDistDir: env("OC_AGENT_DIST_DIR", path.join(repoRoot, "agent-csharp", "publish")),
   oauth: {
     discord: {
-      clientId: env("A3P_OAUTH_DISCORD_CLIENT_ID"),
-      clientSecret: env("A3P_OAUTH_DISCORD_CLIENT_SECRET"),
+      clientId: env("OC_OAUTH_DISCORD_CLIENT_ID"),
+      clientSecret: env("OC_OAUTH_DISCORD_CLIENT_SECRET"),
     },
     google: {
-      clientId: env("A3P_OAUTH_GOOGLE_CLIENT_ID"),
-      clientSecret: env("A3P_OAUTH_GOOGLE_CLIENT_SECRET"),
+      clientId: env("OC_OAUTH_GOOGLE_CLIENT_ID"),
+      clientSecret: env("OC_OAUTH_GOOGLE_CLIENT_SECRET"),
     },
     microsoft: {
-      clientId: env("A3P_OAUTH_MICROSOFT_CLIENT_ID"),
-      clientSecret: env("A3P_OAUTH_MICROSOFT_CLIENT_SECRET"),
-      tenant: env("A3P_OAUTH_MICROSOFT_TENANT", "common"),
+      clientId: env("OC_OAUTH_MICROSOFT_CLIENT_ID"),
+      clientSecret: env("OC_OAUTH_MICROSOFT_CLIENT_SECRET"),
+      tenant: env("OC_OAUTH_MICROSOFT_TENANT", "common"),
     },
     steam: {
-      /** When true (default if unset and STEAM path used) — set A3P_OAUTH_STEAM=1 to enable */
-      enabled: envBool("A3P_OAUTH_STEAM", false) || !!env("A3P_OAUTH_STEAM_API_KEY"),
-      apiKey: env("A3P_OAUTH_STEAM_API_KEY"),
+      /** When true (default if unset and STEAM path used) — set OC_OAUTH_STEAM=1 to enable */
+      enabled: envBool("OC_OAUTH_STEAM", false) || !!env("OC_OAUTH_STEAM_API_KEY"),
+      apiKey: env("OC_OAUTH_STEAM_API_KEY"),
     },
     epic: {
-      clientId: env("A3P_OAUTH_EPIC_CLIENT_ID"),
-      clientSecret: env("A3P_OAUTH_EPIC_CLIENT_SECRET"),
+      clientId: env("OC_OAUTH_EPIC_CLIENT_ID"),
+      clientSecret: env("OC_OAUTH_EPIC_CLIENT_SECRET"),
     },
   },
   repoRoot,

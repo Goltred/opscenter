@@ -28,7 +28,8 @@ deploy/keys/
 *.sqlite-shm
 *.sqlite-wal
 *.db
-.a3p_secrets_key
+.oc_secrets_key
+deploy/.oc_secrets_key
 agent-csharp/publish/
 agent-csharp/bin/
 agent-csharp/obj/

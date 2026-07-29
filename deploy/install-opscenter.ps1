@@ -1,9 +1,9 @@
-# Installs and bootstraps the A3Panel control plane on Windows.
+# Installs and bootstraps the OpsCenter control plane on Windows.
 #
-#   .\install-panel.ps1
-#   .\install-panel.ps1 -AgentZip .\a3panel-agent-win-x64.zip
-#   .\install-panel.ps1 -SkipAgent -NoStart
-#   .\install-panel.ps1 -NonInteractive
+#   .\install-opscenter.ps1
+#   .\install-opscenter.ps1 -AgentZip .\opscenter-agent-win-x64.zip
+#   .\install-opscenter.ps1 -SkipAgent -NoStart
+#   .\install-opscenter.ps1 -NonInteractive
 #
 # After install: sign in at http://localhost:8080 and follow the setup wizard.
 
@@ -107,41 +107,41 @@ function Configure-EnvInteractive([string]$Path) {
     Write-Step "Panel configuration"
     $current = Read-EnvFile $Path
 
-    $publicUrl = $current["A3P_PUBLIC_URL"]
+    $publicUrl = $current["OC_PUBLIC_URL"]
     if (-not $publicUrl) { $publicUrl = "http://localhost:8080" }
-    $publicUrl = Prompt-Required "Panel URL (A3P_PUBLIC_URL)" $publicUrl
-    Set-EnvValue $Path "A3P_PUBLIC_URL" $publicUrl
-    Set-EnvValue $Path "A3P_HTTP_ADDR" ":8080"
-    Set-EnvValue $Path "A3P_WEB_ORIGIN" $publicUrl
-    Set-EnvValue $Path "A3P_DEV_MODE" "true"
-    if (-not $current["A3P_DATABASE_URL"]) {
-        Set-EnvValue $Path "A3P_DATABASE_URL" "../deploy/a3panel.sqlite"
+    $publicUrl = Prompt-Required "Panel URL (OC_PUBLIC_URL)" $publicUrl
+    Set-EnvValue $Path "OC_PUBLIC_URL" $publicUrl
+    Set-EnvValue $Path "OC_HTTP_ADDR" ":8080"
+    Set-EnvValue $Path "OC_WEB_ORIGIN" $publicUrl
+    Set-EnvValue $Path "OC_DEV_MODE" "true"
+    if (-not $current["OC_DATABASE_URL"]) {
+        Set-EnvValue $Path "OC_DATABASE_URL" "../deploy/OpsCenter.sqlite"
     }
-    if (-not $current["A3P_AGENT_ADDR"]) {
-        Set-EnvValue $Path "A3P_AGENT_ADDR" ":8443"
+    if (-not $current["OC_AGENT_ADDR"]) {
+        Set-EnvValue $Path "OC_AGENT_ADDR" ":8443"
     }
 
-    if (-not $current["A3P_SECRETS_KEY"]) {
+    if (-not $current["OC_SECRETS_KEY"]) {
         $key = New-SecretsKey
-        Set-EnvValue $Path "A3P_SECRETS_KEY" $key
-        Write-Host "Generated A3P_SECRETS_KEY (encrypts Steam passwords in the database)."
+        Set-EnvValue $Path "OC_SECRETS_KEY" $key
+        Write-Host "Generated OC_SECRETS_KEY (encrypts Steam passwords in the database)."
     }
 
-    $owners = $current["A3P_BOOTSTRAP_OWNERS"]
+    $owners = $current["OC_BOOTSTRAP_OWNERS"]
     if (-not $owners) {
         Write-Host ""
-        Write-Host "First Owner allowlist (A3P_BOOTSTRAP_OWNERS)"
+        Write-Host "First Owner allowlist (OC_BOOTSTRAP_OWNERS)"
         Write-Host "  Discord: enable Developer Mode, right-click your user, Copy User ID"
         Write-Host "  Format: discord:123456789012345678"
         $owners = Prompt-Required "Bootstrap Owner (provider:subject)"
-        Set-EnvValue $Path "A3P_BOOTSTRAP_OWNERS" $owners
+        Set-EnvValue $Path "OC_BOOTSTRAP_OWNERS" $owners
     }
 
     $hasOAuth = $false
-    foreach ($k in @("A3P_OAUTH_DISCORD_CLIENT_ID", "A3P_OAUTH_GOOGLE_CLIENT_ID", "A3P_OAUTH_MICROSOFT_CLIENT_ID")) {
+    foreach ($k in @("OC_OAUTH_DISCORD_CLIENT_ID", "OC_OAUTH_GOOGLE_CLIENT_ID", "OC_OAUTH_MICROSOFT_CLIENT_ID")) {
         if ($current[$k]) { $hasOAuth = $true; break }
     }
-    if ($current["A3P_OAUTH_STEAM"] -eq "1") { $hasOAuth = $true }
+    if ($current["OC_OAUTH_STEAM"] -eq "1") { $hasOAuth = $true }
 
     if (-not $hasOAuth) {
         Write-Host ""
@@ -153,20 +153,20 @@ function Configure-EnvInteractive([string]$Path) {
             "1" {
                 $id = Prompt-Required "Discord Client ID"
                 $secret = Prompt-Required "Discord Client Secret"
-                Set-EnvValue $Path "A3P_OAUTH_DISCORD_CLIENT_ID" $id
-                Set-EnvValue $Path "A3P_OAUTH_DISCORD_CLIENT_SECRET" $secret
+                Set-EnvValue $Path "OC_OAUTH_DISCORD_CLIENT_ID" $id
+                Set-EnvValue $Path "OC_OAUTH_DISCORD_CLIENT_SECRET" $secret
             }
             "2" {
                 $id = Prompt-Required "Google Client ID"
                 $secret = Prompt-Required "Google Client Secret"
-                Set-EnvValue $Path "A3P_OAUTH_GOOGLE_CLIENT_ID" $id
-                Set-EnvValue $Path "A3P_OAUTH_GOOGLE_CLIENT_SECRET" $secret
+                Set-EnvValue $Path "OC_OAUTH_GOOGLE_CLIENT_ID" $id
+                Set-EnvValue $Path "OC_OAUTH_GOOGLE_CLIENT_SECRET" $secret
             }
             "3" {
                 $id = Prompt-Required "Microsoft Client ID"
                 $secret = Prompt-Required "Microsoft Client Secret"
-                Set-EnvValue $Path "A3P_OAUTH_MICROSOFT_CLIENT_ID" $id
-                Set-EnvValue $Path "A3P_OAUTH_MICROSOFT_CLIENT_SECRET" $secret
+                Set-EnvValue $Path "OC_OAUTH_MICROSOFT_CLIENT_ID" $id
+                Set-EnvValue $Path "OC_OAUTH_MICROSOFT_CLIENT_SECRET" $secret
             }
             default {
                 Write-Host "Skipping OAuth prompts — edit $Path before signing in."
@@ -178,7 +178,7 @@ function Configure-EnvInteractive([string]$Path) {
 }
 
 function Ensure-AgentPackage([string]$PublishDir, [string]$ZipPath) {
-    $exe = Join-Path $PublishDir "a3panel-agent.exe"
+    $exe = Join-Path $PublishDir "opscenter-agent.exe"
     if (Test-Path $exe) {
         Write-Host "Agent binary OK: $exe"
         return
@@ -191,19 +191,19 @@ function Ensure-AgentPackage([string]$PublishDir, [string]$ZipPath) {
         Expand-Archive -Path $ZipPath -DestinationPath $PublishDir -Force
         if (Test-Path $exe) { return }
         # Zip may contain a subfolder
-        $nested = Get-ChildItem -Path $PublishDir -Recurse -Filter "a3panel-agent.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        $nested = Get-ChildItem -Path $PublishDir -Recurse -Filter "opscenter-agent.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($nested) {
             Write-Host "Found agent at $($nested.FullName) — copy contents to $PublishDir if downloads fail."
             return
         }
-        throw "Zip did not contain a3panel-agent.exe"
+        throw "Zip did not contain opscenter-agent.exe"
     }
 
     if (-not (Test-Command "dotnet")) {
         throw @"
-.NET 8 SDK is required to build the host agent, or pass -AgentZip with a pre-built zip.
-  Install: winget install Microsoft.DotNet.SDK.8
-  Or download agent zip from GitHub Releases and run: .\install-panel.ps1 -AgentZip path\to\zip
+.NET 8 SDK is required to build the host agent, or pass -AgentZip if you already have a zip.
+  Install SDK: winget install Microsoft.DotNet.SDK.8
+  Or: .\install-opscenter.ps1 -AgentZip path\to\opscenter-agent.zip
 "@
     }
 
@@ -222,7 +222,7 @@ function Ensure-AgentPackage([string]$PublishDir, [string]$ZipPath) {
 
 # --- main ---
 
-Write-Host "A3Panel installer" -ForegroundColor Green
+Write-Host "OpsCenter installer" -ForegroundColor Green
 Write-Host "Repo: $RepoRoot"
 
 Ensure-Node
@@ -261,7 +261,7 @@ Write-Host @"
 Next steps:
   1. Start the panel (if not started below):  npm start
   2. Open http://localhost:8080
-  3. Sign in with your OAuth provider (bootstrap Owner from A3P_BOOTSTRAP_OWNERS)
+  3. Sign in with your OAuth provider (bootstrap Owner from OC_BOOTSTRAP_OWNERS)
   4. Complete the setup wizard — Steam account, then your first game host
 
 Manual reference: docs\INSTALL.md

@@ -1,17 +1,17 @@
-# A3Panel end-goal (reviewer reference)
+# OpsCenter end-goal (reviewer reference)
 
 ## Product
 
-In-house control panel for Arma 3 dedicated servers on Windows hosts (home/NAT or VPS).
+In-house control panel for dedicated game servers on Windows hosts (home/NAT or VPS). Arma 3 is the current implementation; more titles are planned.
 
 - **Panel** = brain and UX (auth, hosts, instances, profiles, mods, jobs)
-- **Agent** = outbound worker on each game host (processes, files, SteamCMD jobs)
+- **Agent** = outbound worker on each game host (processes, files, download jobs)
 - Host **online** = agent connected
 
 ## Core operator journeys
 
 1. **Add / set up a host** — Agent setup wizard → package → run agent → Verify host (check summary)
-2. **Get Arma installed** — Verify host / Mods & server → Install (Creator DLC when needed)
+2. **Get the game server installed** — Verify host / Mods & server → Install (Arma Creator DLC when needed)
 3. **Download mods** — Mods & server → workshop link or ID (not a raw SteamCMD console)
 4. **Configure & apply a mission** — Profiles → Apply on instance (host tools stay on Dashboard host)
 5. **Run local or remote headless** — local HCs on instance; HC groups on host for cross-host; reachable address only when machines differ

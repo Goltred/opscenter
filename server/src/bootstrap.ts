@@ -30,7 +30,7 @@ export async function bootstrap(): Promise<void> {
   const owners = parseBootstrapOwners();
   if (owners.length === 0) {
     console.log(
-      "A3P_BOOTSTRAP_OWNERS is empty — first Owner will not be auto-created. Set e.g. A3P_BOOTSTRAP_OWNERS=discord:YOUR_ID",
+      "OC_BOOTSTRAP_OWNERS is empty — first Owner will not be auto-created. Set e.g. OC_BOOTSTRAP_OWNERS=discord:YOUR_ID",
     );
   } else {
     console.log(`bootstrap: Owner allowlist ready (${owners.map((o) => `${o.provider}:${o.subject}`).join(", ")})`);

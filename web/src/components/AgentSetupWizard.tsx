@@ -326,7 +326,7 @@ export function AgentSetupWizard({
       const { blob, filename } = await api.downloadPost(`/hosts/${host.id}/agent-package`, {
         steamCmdPath: steamCmdPath.trim(),
       });
-      triggerBlobDownload(blob, filename || `a3panel-agent-${name}.zip`);
+      triggerBlobDownload(blob, filename || `opscenter-agent-${name}.zip`);
       setDownloaded(true);
       await loadSetup(host.id);
     } catch (e: unknown) {
@@ -552,7 +552,11 @@ export function AgentSetupWizard({
                     placeholder={DEFAULT_STEAMCMD}
                   />
                   <div className="muted small" style={{ marginTop: 4 }}>
-                    Tool the agent uses to install Arma and download mods. Must exist on the game host.
+                    Path to <code>steamcmd.exe</code> on the game host (not the panel). Install from{" "}
+                    <a href="https://developer.valvesoftware.com/wiki/SteamCMD" target="_blank" rel="noreferrer">
+                      Valve SteamCMD
+                    </a>{" "}
+                    if needed — Verify does not download SteamCMD itself.
                   </div>
                 </div>
                 <div>
@@ -675,18 +679,27 @@ export function AgentSetupWizard({
               <div className="grid" style={{ gap: 10 }}>
                 <ol className="setup-instructions">
                   <li>
-                    Copy the zip to the game host and extract it (e.g. <span className="tag">C:\a3panel-agent</span>).
+                    Copy the zip to the game host and extract it (e.g. <span className="tag">C:\opscenter-agent</span>).
                   </li>
                   <li>Check that the Arma root and SteamCMD paths in the config match this host.</li>
-                  <li>Install SteamCMD at that path if it is not already there.</li>
                   <li>
-                    Run <span className="tag">a3panel-agent.exe</span>.
+                    Install{" "}
+                    <a href="https://developer.valvesoftware.com/wiki/SteamCMD" target="_blank" rel="noreferrer">
+                      SteamCMD
+                    </a>{" "}
+                    at that path if it is not already there.
+                  </li>
+                  <li>
+                    Run <span className="tag">opscenter-agent.exe</span>.
                   </li>
                   <li>Optional: install as a Windows service (see README.txt in the zip).</li>
                 </ol>
                 {info?.controlPlaneUrl && (
                   <p className="muted small" style={{ margin: 0 }}>
-                    Firewall: allow outbound WebSocket to <span className="tag">{info.controlPlaneUrl}</span>.
+                    The agent dials <span className="tag">{info.controlPlaneUrl}</span>. On the panel firewall, allow
+                    inbound on the agent port (default 8443). Game hosts only need outbound access. If this URL says
+                    localhost but the game host is another PC, fix <code>OC_PUBLIC_URL</code> and download a new
+                    package.
                   </p>
                 )}
                 <div className="row" style={{ gap: 10, alignItems: "center", marginTop: 4 }}>

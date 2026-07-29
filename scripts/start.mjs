@@ -46,12 +46,12 @@ function ensureDeps(dir) {
 loadEnvFile(path.join(root, "deploy", "control-plane.env"));
 
 // Defaults for a single-port local run
-process.env.A3P_HTTP_ADDR ||= ":8080";
-process.env.A3P_PUBLIC_URL ||= "http://localhost:8080";
-process.env.A3P_WEB_ORIGIN ||= "http://localhost:8080";
-process.env.A3P_WEB_DIR ||= path.join(root, "web", "dist");
-process.env.A3P_DEV_MODE ||= "true";
-process.env.A3P_DATABASE_URL ||= path.join(root, "deploy", "a3panel.sqlite");
+process.env.OC_HTTP_ADDR ||= ":8080";
+process.env.OC_PUBLIC_URL ||= "http://localhost:8080";
+process.env.OC_WEB_ORIGIN ||= "http://localhost:8080";
+process.env.OC_WEB_DIR ||= path.join(root, "web", "dist");
+process.env.OC_DEV_MODE ||= "true";
+process.env.OC_DATABASE_URL ||= path.join(root, "deploy", "OpsCenter.sqlite");
 
 await ensureDeps("server");
 await ensureDeps("web");

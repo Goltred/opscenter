@@ -1,13 +1,13 @@
 ---
 name: ux-triad-review
 description: >-
-  Runs A3Panel’s three-role UX loop — operator (find confusing workflows),
+  Runs OpsCenter’s three-role UX loop — operator (find confusing workflows),
   developer (implement fixes), end-goal reviewer (check adherence). Use when the
   user asks for a UX review, triad review, confusing-workflows pass, operator
   walkthrough, or to validate UI changes against the product goal.
 ---
 
-# A3Panel UX triad review
+# OpsCenter UX triad review
 
 Orchestrate three roles against the live codebase (UI code + copy). Do **not** claim a real browser click-through unless the user is driving the UI.
 

@@ -1,8 +1,12 @@
 {
-  "name": "a3panel",
+  "name": "opscenter",
   "private": true,
   "version": "0.1.0",
-  "description": "A3Panel — Node control plane + React UI",
+  "description": "Self-hosted control panel for dedicated game servers (Node panel + .NET host agent)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "install:all": "npm install --prefix server && npm install --prefix web",
     "build:web": "npm run build --prefix web",

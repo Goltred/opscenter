@@ -6,4 +6,4 @@ When the user wants a confusing-workflows / UX / triad pass, follow the project 
 
 `.cursor/skills/ux-triad-review/SKILL.md`
 
-Product principles always apply via `.cursor/rules/a3panel-product-goal.mdc`.
+Product principles always apply via `.cursor/rules/opscenter-product-goal.mdc`.

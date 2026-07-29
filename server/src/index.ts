@@ -31,7 +31,7 @@ async function main() {
   }
 
   app.get("/healthz", (_req, res) => res.json({ ok: true }));
-  app.get("/metrics", (_req, res) => res.type("text/plain").send("# a3panel node kickstart\n"));
+  app.get("/metrics", (_req, res) => res.type("text/plain").send("# OpsCenter node kickstart\n"));
 
   app.use("/api/auth", authRouter);
   app.use("/api", apiRouter);
@@ -47,12 +47,12 @@ async function main() {
 
   const port = listenPort();
   app.listen(port, () => {
-    console.log(`A3Panel (Node) listening on http://localhost:${port}`);
+    console.log(`OpsCenter (Node) listening on http://localhost:${port}`);
     console.log(`devMode=${config.devMode} db=${config.databaseUrl}`);
     console.log(
       config.bootstrapOwners
         ? `sign in via OAuth; bootstrap owners: ${config.bootstrapOwners}`
-        : "sign in via OAuth; set A3P_BOOTSTRAP_OWNERS to seed the first Owner",
+        : "sign in via OAuth; set OC_BOOTSTRAP_OWNERS to seed the first Owner",
     );
   });
 

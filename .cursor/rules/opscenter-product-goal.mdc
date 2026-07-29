@@ -1,11 +1,11 @@
 ---
-description: A3Panel product end-goal and UX principles for all panel/agent work
+description: OpsCenter product end-goal and UX principles for all panel/agent work
 alwaysApply: true
 ---
 
-# A3Panel product goal
+# OpsCenter product goal
 
-Self-hosted panel for Arma 3 dedicated servers: hosts (outbound agents), instances, mission profiles, mods, and headless — usable by operators who are not SteamCMD experts.
+Self-hosted panel for dedicated game servers: hosts (outbound agents), instances, mission profiles, mods, and headless — usable by operators who are not low-level Steam/tooling experts. Arma 3 is the current implementation focus; more titles are planned.
 
 ## UX principles
 

@@ -295,7 +295,7 @@ export async function searchWorkshop(query: string, page = 1): Promise<WorkshopM
 
   const res = await fetch(url, {
     headers: {
-      "User-Agent": "A3Panel/0.1 (workshop search)",
+      "User-Agent": "OpsCenter/0.1 (workshop search)",
       Accept: "text/html",
     },
   });
@@ -411,7 +411,7 @@ async function fetchChildrenViaHtml(id: string): Promise<string[]> {
   try {
     const res = await fetch(workshopUrl(id), {
       headers: {
-        "User-Agent": "A3Panel/0.1 (workshop deps)",
+        "User-Agent": "OpsCenter/0.1 (workshop deps)",
         Accept: "text/html",
       },
     });

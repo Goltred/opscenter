@@ -35,7 +35,7 @@ export function resolveSteamAccount(steamAccountId?: string | null): SteamAccoun
   try {
     password = decryptSecret(row.enc_password || "");
   } catch {
-    throw new Error("Failed to decrypt Steam password — check A3P_SECRETS_KEY matches the key used when the account was saved.");
+    throw new Error("Failed to decrypt Steam password — check OC_SECRETS_KEY matches the key used when the account was saved.");
   }
 
   if (!row.username?.trim()) throw new Error(`Steam account “${row.label}” has no username.`);

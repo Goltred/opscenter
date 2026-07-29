@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json.Serialization;
 
-namespace A3Panel.Agent;
+namespace OpsCenter.Agent;
 
 public sealed class InstanceControlPayload
 {
@@ -678,7 +678,7 @@ public sealed class InstanceProcessManager
 
     private async Task TailRptLoop(string instanceId, string profilePath, CancellationToken ct)
     {
-        Emit(instanceId, $"[a3panel] watching Arma RPT under {profilePath}");
+        Emit(instanceId, $"[OpsCenter] watching Arma RPT under {profilePath}");
         string? currentFile = null;
         long position = 0;
         var waited = 0;
@@ -689,7 +689,7 @@ public sealed class InstanceProcessManager
             {
                 if (_procs.TryGetValue(instanceId, out var proc) && proc.HasExited)
                 {
-                    Emit(instanceId, $"[a3panel] process exited (code {proc.ExitCode})");
+                    Emit(instanceId, $"[OpsCenter] process exited (code {proc.ExitCode})");
                     break;
                 }
 
@@ -698,7 +698,7 @@ public sealed class InstanceProcessManager
                 {
                     waited += 1500;
                     if (waited == 1500 || waited % 15000 == 0)
-                        Emit(instanceId, "[a3panel] waiting for .rpt file (Arma writes logs after startup)…");
+                        Emit(instanceId, "[OpsCenter] waiting for .rpt file (Arma writes logs after startup)…");
                     await Task.Delay(1500, ct);
                     continue;
                 }
@@ -709,7 +709,7 @@ public sealed class InstanceProcessManager
                     var len = new FileInfo(newest).Length;
                     // On first attach, show recent history; on rotate, start near end.
                     position = len > 96_000 ? len - 96_000 : 0;
-                    Emit(instanceId, $"[a3panel] tailing {Path.GetFileName(newest)}");
+                    Emit(instanceId, $"[OpsCenter] tailing {Path.GetFileName(newest)}");
                 }
 
                 await using var fs = new FileStream(
@@ -731,7 +731,7 @@ public sealed class InstanceProcessManager
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                Emit(instanceId, $"[a3panel] log tail error: {ex.Message}");
+                Emit(instanceId, $"[OpsCenter] log tail error: {ex.Message}");
             }
 
             try { await Task.Delay(400, ct); }
@@ -1219,7 +1219,7 @@ public sealed class InstanceProcessManager
     }
 
     private static string HcPidFilePath(string instanceProfilePath, string name) =>
-        Path.Combine(instanceProfilePath, $".a3panel.{name}.pid");
+        Path.Combine(instanceProfilePath, $".OpsCenter.{name}.pid");
 
     private static void TryWriteHcPidFile(string instanceProfilePath, string name, int pid)
     {
@@ -1255,7 +1255,7 @@ public sealed class InstanceProcessManager
     }
 
     private static string PidFilePath(string profilePath) =>
-        Path.Combine(profilePath, ".a3panel.pid");
+        Path.Combine(profilePath, ".OpsCenter.pid");
 
     private static void TryWritePidFile(string profilePath, int pid)
     {
