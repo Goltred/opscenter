@@ -681,18 +681,30 @@ export function AgentSetupWizard({
                   <li>
                     Copy the zip to the game host and extract it (e.g. <span className="tag">C:\opscenter-agent</span>).
                   </li>
-                  <li>Check that the Arma root and SteamCMD paths in the config match this host.</li>
+                  <li>
+                    Open <span className="tag">agent.json</span> in that folder. Confirm{" "}
+                    <code>armaRoot</code> and <code>steamCmdPath</code> are correct for this machine
+                    {steamCmdPath.trim() || armaRoot.trim() ? (
+                      <>
+                        {" "}
+                        (expected something like <span className="tag">{armaRoot.trim() || "…"}</span> and{" "}
+                        <span className="tag">{steamCmdPath.trim() || "…"}</span>)
+                      </>
+                    ) : null}
+                    . Leave the other fields alone unless you know you need to change them.
+                  </li>
                   <li>
                     Install{" "}
                     <a href="https://developer.valvesoftware.com/wiki/SteamCMD" target="_blank" rel="noreferrer">
                       SteamCMD
                     </a>{" "}
-                    at that path if it is not already there.
+                    so <code>steamCmdPath</code> points at a real <code>steamcmd.exe</code>.
                   </li>
                   <li>
-                    Run <span className="tag">opscenter-agent.exe</span>.
+                    Run <span className="tag">opscenter-agent.exe</span> from the same folder (it reads{" "}
+                    <span className="tag">agent.json</span> next to the exe).
                   </li>
-                  <li>Optional: install as a Windows service (see README.txt in the zip).</li>
+                  <li>Optional: install as a Windows service (see <span className="tag">README.txt</span> in the zip).</li>
                 </ol>
                 {info?.controlPlaneUrl && (
                   <p className="muted small" style={{ margin: 0 }}>

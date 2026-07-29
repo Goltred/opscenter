@@ -48,7 +48,7 @@ Dashboard host card → **Browse files** — navigate and delete under the host 
 
 Workflow: add entries under **Mods** (search or workshop ID) → on the host, open **Mods & server** to download what the host is missing → attach mods on a profile → **Apply**.
 
-Steam account: **Admin → Steam** (encrypted on the panel; sent to the agent per job only). Prefer `wss://` outside a trusted LAN — see [SECURITY.md](SECURITY.md).
+Steam account: **Admin → Steam** (encrypted on the panel; sent to the agent per job only). Workshop mods need an account that owns Arma 3; the dedicated server package does not. Prefer `wss://` outside a trusted LAN — see [SECURITY.md](SECURITY.md).
 
 Shared mods folder (Edit host): read-only library the agent never writes into. Missing mods download into the host’s local workshop tree under Arma root.
 

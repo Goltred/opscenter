@@ -360,7 +360,8 @@ export function PanelSetupWizard() {
               <div className="grid" style={{ gap: 12 }}>
                 <p className="muted small" style={{ margin: 0 }}>
                   Steam credentials stay on the panel (encrypted). The agent receives them only per download job — never
-                  stored in the host package.
+                  stored in the host package. Workshop mods need an account that owns Arma 3; the dedicated server
+                  package itself does not.
                 </p>
                 {steamCheck?.status === "pass" ? (
                   <div className="ok-banner">{steamCheck.detail}</div>

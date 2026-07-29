@@ -115,7 +115,7 @@ function Configure-EnvInteractive([string]$Path) {
     Set-EnvValue $Path "OC_WEB_ORIGIN" $publicUrl
     Set-EnvValue $Path "OC_DEV_MODE" "true"
     if (-not $current["OC_DATABASE_URL"]) {
-        Set-EnvValue $Path "OC_DATABASE_URL" "../deploy/OpsCenter.sqlite"
+        Set-EnvValue $Path "OC_DATABASE_URL" "../deploy/opscenter.sqlite"
     }
     if (-not $current["OC_AGENT_ADDR"]) {
         Set-EnvValue $Path "OC_AGENT_ADDR" ":8443"
@@ -169,7 +169,7 @@ function Configure-EnvInteractive([string]$Path) {
                 Set-EnvValue $Path "OC_OAUTH_MICROSOFT_CLIENT_SECRET" $secret
             }
             default {
-                Write-Host "Skipping OAuth prompts — edit $Path before signing in."
+                Write-Host "Skipping OAuth prompts - edit $Path before signing in."
             }
         }
     } else {
@@ -193,18 +193,16 @@ function Ensure-AgentPackage([string]$PublishDir, [string]$ZipPath) {
         # Zip may contain a subfolder
         $nested = Get-ChildItem -Path $PublishDir -Recurse -Filter "opscenter-agent.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($nested) {
-            Write-Host "Found agent at $($nested.FullName) — copy contents to $PublishDir if downloads fail."
+            Write-Host "Found agent at $($nested.FullName) - copy contents to $PublishDir if downloads fail."
             return
         }
         throw "Zip did not contain opscenter-agent.exe"
     }
 
     if (-not (Test-Command "dotnet")) {
-        throw @"
-.NET 8 SDK is required to build the host agent, or pass -AgentZip if you already have a zip.
-  Install SDK: winget install Microsoft.DotNet.SDK.8
-  Or: .\install-opscenter.ps1 -AgentZip path\to\opscenter-agent.zip
-"@
+        throw (".NET 8 SDK is required to build the host agent, or pass -AgentZip if you already have a zip. " +
+            "Install SDK: winget install Microsoft.DotNet.SDK.8 " +
+            "Or: .\install-opscenter.ps1 -AgentZip path\to\opscenter-agent.zip")
     }
 
     Write-Step "Building host agent (dotnet publish)"
@@ -256,18 +254,16 @@ if (-not $SkipAgent) {
 }
 
 Write-Step "Done"
-Write-Host @"
-
-Next steps:
-  1. Start the panel (if not started below):  npm start
-  2. Open http://localhost:8080
-  3. Sign in with your OAuth provider (bootstrap Owner from OC_BOOTSTRAP_OWNERS)
-  4. Complete the setup wizard — Steam account, then your first game host
-
-Manual reference: docs\INSTALL.md
-Day-to-day guide:   docs\SETUP.md
-
-"@
+Write-Host ""
+Write-Host "Next steps:"
+Write-Host "  1. Start the panel (if not started below):  npm start"
+Write-Host "  2. Open http://localhost:8080"
+Write-Host "  3. Sign in with your OAuth provider (bootstrap Owner from OC_BOOTSTRAP_OWNERS)"
+Write-Host "  4. Complete the setup wizard - Steam account, then your first game host"
+Write-Host ""
+Write-Host "Manual reference: docs\INSTALL.md"
+Write-Host "Day-to-day guide:   docs\SETUP.md"
+Write-Host ""
 
 if ($NoStart) {
     Write-Host "Skipped start (-NoStart)."

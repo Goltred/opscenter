@@ -51,7 +51,7 @@ process.env.OC_PUBLIC_URL ||= "http://localhost:8080";
 process.env.OC_WEB_ORIGIN ||= "http://localhost:8080";
 process.env.OC_WEB_DIR ||= path.join(root, "web", "dist");
 process.env.OC_DEV_MODE ||= "true";
-process.env.OC_DATABASE_URL ||= path.join(root, "deploy", "OpsCenter.sqlite");
+process.env.OC_DATABASE_URL ||= path.join(root, "deploy", "opscenter.sqlite");
 
 await ensureDeps("server");
 await ensureDeps("web");

@@ -132,7 +132,7 @@ export function buildSetupStatus(): SetupStatus {
       detail:
         steamAccountCount > 0
           ? `${steamAccountCount} account${steamAccountCount === 1 ? "" : "s"} ready for installs and mod downloads`
-          : "Add a Steam account that owns Arma 3 — needed to install the dedicated server and workshop mods.",
+          : "Add a Steam account — Workshop mods need one that owns Arma 3; the dedicated server package itself does not.",
     },
     {
       id: "host",

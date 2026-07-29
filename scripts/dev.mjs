@@ -27,7 +27,7 @@ process.env.OC_HTTP_ADDR ||= ":8080";
 process.env.OC_PUBLIC_URL ||= "http://localhost:8080";
 process.env.OC_WEB_ORIGIN ||= "http://localhost:5173";
 process.env.OC_DEV_MODE ||= "true";
-process.env.OC_DATABASE_URL ||= path.join(root, "deploy", "OpsCenter.sqlite");
+process.env.OC_DATABASE_URL ||= path.join(root, "deploy", "opscenter.sqlite");
 
 for (const dir of ["server", "web"]) {
   if (!fs.existsSync(path.join(root, dir, "node_modules"))) {

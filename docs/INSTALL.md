@@ -20,7 +20,7 @@ This guide gets the **panel** (Node API + web UI) running on one machine. Game h
 | Node.js | 20+ | — |
 | .NET 8 SDK | Recommended (builds the host agent) | — |
 | OAuth app | At least one (Discord, Google, …) | — |
-| Steam account | Saved in panel UI (owns the game; Arma 3 today) | — |
+| Steam account | Saved in panel UI (any account can pull the dedicated server; **owns Arma 3** for Workshop mods) | — |
 | SteamCMD | — | Installed on the game host (see below) |
 
 **Networking:** game hosts dial **out** to the panel. You do **not** need inbound ports on home game PCs. The **panel** must accept:
@@ -181,7 +181,7 @@ On each **Windows game host**:
 
 1. Install **[SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD)** (Valve) and note the path to `steamcmd.exe` (often `C:\steamcmd\steamcmd.exe`)
 2. Enter that path in Agent setup → Host settings  
-3. Use a Steam account that **owns Arma 3** (saved under Admin → Steam or in the setup wizard)  
+3. Use a Steam account saved under Admin → Steam or in the setup wizard. **Workshop mods** need an account that **owns Arma 3**; installing the dedicated server package alone does not.  
 4. If Steam Guard prompts on first download, complete it on the host when the job asks — the panel shows whether Guard is cached afterward  
 
 Verify / Apply can install the dedicated server under your Arma root when it is missing; SteamCMD itself must already be present.
